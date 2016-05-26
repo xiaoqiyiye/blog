@@ -8,7 +8,7 @@
                     var target = event.currentTarget || event.target;
                     var $form = w.jQuery(target);
                     var orgVal = $form.find('.search').val();
-                    $form.find('.search').val('site:zhaokaiju.github.io/ ' + orgVal);
+                    $form.find('.search').val('site:xiaoqiyiye.github.io/ ' + orgVal);
                     done = true;
                     $form.submit();
                 }
@@ -16,7 +16,7 @@
             $('.hubinfo').each(function (i, e) {
                 var $elem = $(e);
                 $elem.hubInfo({
-                    user : $elem.data('u') || 'zhaokaiju',
+                    user : $elem.data('u') || 'xiaoqiyiye',
                     repo : $elem.data('r') || ''
                 });
             });

@@ -1,4 +1,4 @@
 User-Agent: *
 Disallow: /
 
-Sitemap: http://www.zhaokaiju.com/sitemap.xml
+Sitemap: http://xiaoqiyiye.github.io/sitemap.xml

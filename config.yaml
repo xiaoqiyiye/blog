@@ -1,7 +1,7 @@
-title: "月光の云海"
+title: "Xiaoqiyiye"
 languageCode: "zh-CN"
-baseurl: "http://www.zhaokaiju.com"
-copyright: "Copyright (c) 2015-2016. zhaokaiju All rights reserved."
+baseurl: "http://xiaoqiyiye.github.io"
+copyright: "Copyright (c) 2015-2016. xiaoqiyiye All rights reserved."
 MetaDataFormat: "yaml"
 canonifyurls: true
 builddrafts: false
@@ -17,20 +17,15 @@ Taxonomies:
   tag: "tags"
   category: "categories"
 params:
-  CopyrightHTML: "Copyright &#xA9; 2015-2016. zhaokaiju All Rights Reserved."
-  GitHubUser: "zhaokaiju"
+  CopyrightHTML: "Copyright &#xA9; 2015-2016. xiaoqiyiye All Rights Reserved."
+  GitHubUser: "xiaoqiyiye"
   SidebarRecentLimit: 5
   DateForm : "2006年01月02日"
   Tagline: ""
-  Description: "精进自己，分享他人！"
-  Keywords: "独立博客,程序员,思考,阅读笔记,技术分享"
+  Description: "xiaoqiyiye！"
+  Keywords: "技术分享"
   Categories:
-    - "读书笔记"
     - "技术学习"
-    - "旅行运动"
-    - "思考感悟"
-    - "手艺学习"
-    - "综合学习"
 menu:
   main:
       - Name: "归档"
@@ -44,7 +39,7 @@ menu:
         Weight: -100
         URL: "/about/"
 author:
-  name: "月光の云海"
+  name: "xiaoqiyiye"
 
 images:
   - 480x
