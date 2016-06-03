@@ -12,7 +12,7 @@ deploy:
   steps:
     - install-packages:
         packages: git ssh-client
-    - leipert/git-push:
+    - lukevivier/master@0.2.1:
         token: $GIT_TOKEN
         domain: xiaoqiyiye.github.io
         basedir: public
