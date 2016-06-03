@@ -11,8 +11,8 @@ build:
 deploy:
   steps:
     - install-packages:
-    - lukevivier/gh-pages@0.2.1:
         packages: git ssh-client
+    - lukevivier/master@0.2.1:
         token: $GIT_TOKEN
-        domain: xiaoqiyiye.com
+        domain: xiaoqiyiye.github.io
         basedir: public
