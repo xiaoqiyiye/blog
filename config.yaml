@@ -1,7 +1,7 @@
 title: "Xiaoqiyiye"
-languageCode: "zh-CN"
+languageCode: "zh-cn"
 baseurl: "http://xiaoqiyiye.github.io"
-copyright: "Copyright (c) 2015-2016. xiaoqiyiye All rights reserved."
+copyright: "Copyright (c) 2015. All rights reserved."
 MetaDataFormat: "yaml"
 canonifyurls: true
 builddrafts: false
@@ -16,30 +16,21 @@ permalinks:
 Taxonomies:
   tag: "tags"
   category: "categories"
-params:
-  CopyrightHTML: "Copyright &#xA9; 2015-2016. xiaoqiyiye All Rights Reserved."
-  GitHubUser: "xiaoqiyiye"
-  SidebarRecentLimit: 5
-  DateForm : "2006年01月02日"
-  Tagline: ""
-  Description: "xiaoqiyiye！"
-  Keywords: "技术分享"
-  Categories:
-    - "技术学习"
-menu:
-  main:
-      - Name: "归档"
-        Pre: "<i class='fa fa-heart'></i>"
-        Weight: -110
-        Identifier: "post"
-        URL: "/post/"
-      - Name: "关于我"
-        Pre: "<i class='fa fa-road'></i>"
-        Identifier: "about"
-        Weight: -100
-        URL: "/about/"
+
+Params:
+  Author: "linya"
+  DateForm: "2006年1月2日"
+  Github: "xiaoqiyiye"
+  ShowRelatedPost: True
+  Disqus: "Your Disqus."
+  SyntaxHighlightTheme: "solarized_dark.min.css"
+
+Indexes:
+  tag: "tags"
+  category: "categories"
+  
 author:
-  name: "xiaoqiyiye"
+  name: "linya"
 
 images:
   - 480x
