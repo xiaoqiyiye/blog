@@ -11,7 +11,7 @@ build:
 deploy:
   steps:
     - install-packages:
-    - lukevivier/master@0.2.1:
+    - leipert/git-push:
         packages: git ssh-client
         token: $GIT_TOKEN
         domain: xiaoqiyiye.com
