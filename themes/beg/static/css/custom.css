@@ -1,0 +1,9 @@
+/* Please override here. */
+
+.hljs-comment{
+	color: red;
+}
+
+.hljs{
+	background: #EEEEEE;
+}
