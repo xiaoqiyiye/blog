@@ -1,14 +1,23 @@
 ﻿---
-title: Spring Cache (1) -- CacheManager和Cache
+title: SpringCache源码分析(1)  CacheManager和Cache
 date: "2016-01-22T11:00:00+08:00"
 tags:
     - spring cache
 url: 2016/01/23/spring-cache-1/
 ---
 
-这篇作为Spring Cache源码分析的起始篇，重要在于分析CacheManager和Cache。但是，在分析CacheManager和Cache之前，还是先看一个简单的例子，这样有助于理解Spring Cache的概念，知道Spring Cache在干什么，有什么作用，只有知道了Spring Cache的用处，在分析源码的时候才能知道Spring Cache的功能是怎么实现的！ 这里不讲使用的细节，如果想要了解细节请看其他质料或后面篇涨中的详细分析。
 
-### Spring Cache Hello示例
+----------
+
+&#160;&#160;&#160;&#160;
+这篇作为Spring Cache源码分析的起始篇，重要在于分析CacheManager和Cache。但是，在分析CacheManager和Cache之前，还是先看一个简单的例子，这样有助于理解Spring Cache的概念，知道Spring Cache在干什么，有什么作用，只有知道了Spring Cache的用处，在分析源码的时候才能知道Spring Cache的功能是怎么实现的！ 这里不讲使用的细节，如果想要了解细节请看其他质料或后面篇章中的详细分析。
+
+
+----------
+
+### Hello示例
+
+&#160;&#160;&#160;&#160;
 下面直接上示例代码，一个简单的Hello程序，Hello、HelloService、HelloTest。在下面代码中我们用到了注解：@CachePut，@Cacheable，@CacheEvict。从单词意思我们就应该知道这些的作用是什么，@CachePut用于把数据存放到缓存中；@Cacheable用于从缓存中获取数据，如果缓存中不存在就执行代码得到并存放在缓存中去，以便下次从缓存中获取；@CacheEvict用于驱除缓存中的数据。在后面的章节中会详细的讲解这些注解中的每个属性。
 
 Hello对象：
@@ -90,6 +99,7 @@ public class HelloTest extends AbstractJUnit4SpringContextTests{
 	}
 }
 ```
+
 我们可以试着运行上面的测试文件，但是程序是不能运行的，为什么呢，因为需要配置文件applicationContext.xml。上面我们说过通过注解可以缓存、获取、删除数据，那么数据被缓存到了哪里呢？很显然这样需要applicationContext.xml配置文件来处理，指明数据需要缓存的地方，这个缓存的地方在Spring Cache被定义为Cache和CacheManager，下面我们来看看如何简单的配置Spring Cache。
 ```
 <?xml version="1.0" encoding="UTF-8"?>
@@ -124,8 +134,13 @@ public class HelloTest extends AbstractJUnit4SpringContextTests{
 </beans>
 ```
 
-### CacheManager 和 Cache ###
+----------
+
+### CacheManager 和 Cache
+
+&#160;&#160;&#160;&#160;
 CacheManager定义很简单，用于管理Cache集合，并提供通过Cache名称获取对应Cache对象的方法。下面是CacheManager接口定义：
+
 ```
 /**
  * Spring's central cache manager SPI.
@@ -148,7 +163,9 @@ public interface CacheManager {
 }
 ```
 
+&#160;&#160;&#160;&#160;
 从上面的CacheManager可以知道，每个Cache必须要指定一个name，这个name需要在CacheManager中是唯一的。另外Cache对象还需要支持一些数据操作，存放数据、获取数据、驱除数据等等。下面，我们看看Cache接口的定义：
+
 ```
 /**
  * Interface that defines common cache operations.
@@ -201,7 +218,9 @@ public interface Cache {
 }
 ```
 
+&#160;&#160;&#160;&#160;
 CacheManager和Cache接口定义就是这么简单，下面再看看CacheManager和Cache的实现类。它们的实现类很多，我们这里选基于ConcurrentMap的实现：ConcurrentMapCacheManager和ConcurrentMapCache。
+
 ```
 /**
  * ConcurrentMapCacheManager负责管理ConcurrentMapCache对象，支持懒加载获取，也支持预先实例化对象，
@@ -284,7 +303,9 @@ public class ConcurrentMapCacheManager implements CacheManager {
 }
 ```
 
+&#160;&#160;&#160;&#160;
 CacheManager和Cache是不是很简单？是的，非常简单！ 可是在上面的applicationContext.xml并没有配置ConcurrentMapCacheManager和ConcurrentMapCache呀，在回顾一下applicationContext.xml中是怎么配置的吧，配置如下：
+
 ```
 <bean id="cacheManager" class="org.springframework.cache.support.SimpleCacheManager">
     <property name="caches">
@@ -297,7 +318,9 @@ CacheManager和Cache是不是很简单？是的，非常简单！ 可是在上�
 </bean>
 ```
 
+&#160;&#160;&#160;&#160;
 在applicationContext.xml中配置了SimpleCacheManager和ConcurrentMapCacheFactoryBean，SimpleCacheManager也是一个CacheManager的实现类，一个比ConcurrentMapCacheManager更简单的实现类，它需要外部指定Cache集合对象，而这个Cache对象正是使用ConcurrentMapCacheFactoryBean来注入到Spring的。虽然这两个类很简单，但是还是看一下部分源码吧（去掉了一些方法）。
+
 ```
 public class ConcurrentMapCacheFactoryBean implements FactoryBean<ConcurrentMapCache>, BeanNameAware, InitializingBean {
 
@@ -367,7 +390,9 @@ public class ConcurrentMapCacheFactoryBean implements FactoryBean<ConcurrentMapC
 }
 ```
 
+&#160;&#160;&#160;&#160;
 其实，在applicationContext.xml中就负责配置了CacheManager，告诉Spring Cache使用什么要的CacheManager实现，接下来我们使用ConcurrentMapCacheManager来配置，可以达到同样的效果。
+
 ```
 <bean id="cacheManager" class="org.springframework.cache.concurrent.ConcurrentMapCacheManager">
     <!-- 可以不设置cacheNames哦，设置之后就不能动态创建Cache了。前面代码已经分析过，明白了吗！ -->
@@ -380,6 +405,8 @@ public class ConcurrentMapCacheFactoryBean implements FactoryBean<ConcurrentMapC
 </bean>
 ```
 
+&#160;&#160;&#160;&#160;
 通过上面的分析，我们已经清楚地了解了CacheManager和Cache接口的作用，以及基于ConcurrentMap的实现。但是，分析了这么久，那Spring到底是怎么缓存数据的呢？ @CachePut、@Cacheable、@CacheEvict是怎么产生作用的呢？ 莫急，莫急，这个在后续章节中详细说明。至少我们现在知道，数据被存储到哪里去了！ 对，数据被存储在Cache是实现类里，就这么简单！
 
+&#160;&#160;&#160;&#160;
 CacheManager和Cache还有基于Redis、Guava、EhCache、JCache的实现，这里就不分析了。哈哈，其实原理都一样！
