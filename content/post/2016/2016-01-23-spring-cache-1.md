@@ -15,7 +15,7 @@ url: 2016/01/23/spring-cache-1/
 
 ----------
 
-### Hello示例
+### Hello示例 [下载](https://github.com/xiaoqiyiye/blog-example/tree/master/seven.xiaoqiyiye.spring.cache.hello)
 
 &#160;&#160;&#160;&#160;
 下面直接上示例代码，一个简单的Hello程序，Hello、HelloService、HelloTest。在下面代码中我们用到了注解：@CachePut，@Cacheable，@CacheEvict。从单词意思我们就应该知道这些的作用是什么，@CachePut用于把数据存放到缓存中；@Cacheable用于从缓存中获取数据，如果缓存中不存在就执行代码得到并存放在缓存中去，以便下次从缓存中获取；@CacheEvict用于驱除缓存中的数据。在后面的章节中会详细的讲解这些注解中的每个属性。
@@ -237,18 +237,9 @@ public class ConcurrentMapCacheManager implements CacheManager {
 	//表示是否可以动态创建Cache缓存，如果指定过name那么就不能动态创建
 	private boolean dynamic = true;
 	
-	/**
-	 * Construct a dynamic ConcurrentMapCacheManager,
-	 * lazily creating cache instances as they are being requested.
-	 */
 	public ConcurrentMapCacheManager() {
-
 	}
 
-	/**
-	 * Construct a static ConcurrentMapCacheManager,
-	 * managing caches for the specified cache names only.
-	 */
 	public ConcurrentMapCacheManager(String... cacheNames) {
 		setCacheNames(Arrays.asList(cacheNames));
 	}
@@ -294,7 +285,7 @@ public class ConcurrentMapCacheManager implements CacheManager {
 	}
 
 	/**
-	 * Create a new ConcurrentMapCache instance for the specified cache name.
+	 * 创建Cache对象
 	 */
 	protected Cache createConcurrentMapCache(String name) {
 		return new ConcurrentMapCache(name, isAllowNullValues());
@@ -346,20 +337,10 @@ public class ConcurrentMapCacheFactoryBean implements FactoryBean<ConcurrentMapC
 		this.name = name;
 	}
 
-	/**
-	 * Specify the ConcurrentMap to use as an internal store
-	 * (possibly pre-populated).
-	 * <p>Default is a standard {@link java.util.concurrent.ConcurrentHashMap}.
-	 */
 	public void setStore(ConcurrentMap<Object, Object> store) {
 		this.store = store;
 	}
 
-	/**
-	 * Set whether to allow {@code null} values
-	 * (adapting them to an internal null holder value).
-	 * <p>Default is "true".
-	 */
 	public void setAllowNullValues(boolean allowNullValues) {
 		this.allowNullValues = allowNullValues;
 	}
