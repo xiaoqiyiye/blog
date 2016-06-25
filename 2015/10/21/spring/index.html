@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+
+<meta charset="utf-8">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+<meta property="og:url" content="http://www.xiaoqiyiye.com/">
+
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="SpringMVC源码分析(1) DispatchServlet初始化 &middot; Xiaoqiyiye">
+
+<meta property="og:site_name" content="Xiaoqiyiye">
+
+<title>
+    
+    SpringMVC源码分析(1) DispatchServlet初始化
+    
+</title>
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap-theme.min.css">
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="//yandex.st/highlightjs/8.0/styles/solarized_dark.min.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/styles.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/custom.css">
+
+
+<link rel="shortcut icon" href="http://www.xiaoqiyiye.com//assets/favicon.ico">
+
+
+<link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.xiaoqiyiye.com//index.xml">
+
+
+<div class="container">
+    <header class="nav">
+        <nav class="navbar navbar-default">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand" href="http://www.xiaoqiyiye.com/">Xiaoqiyiye</a>
+                </div>
+
+                <div class="collapse navbar-collapse" id="navbar-collapse">
+                    <ul class="nav navbar-nav">
+                        <li><a href="http://www.xiaoqiyiye.com//post">博客</a></li>
+                        <li><a href="http://www.xiaoqiyiye.com//tags">分类</a></li>
+                        
+                        <li><a href="http://www.xiaoqiyiye.com/about/">关于我</a></li>
+                        
+                    </ul>
+
+                    <ul class="nav navbar-nav navbar-right">
+                        
+                        
+                        
+                        <li>
+                            <a href="https://github.com/xiaoqiyiye" target="_blank">
+                                <i class="fa fa-github-square"></i>
+                                GitHub
+                            </a>
+                        </li>
+                        
+                        
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+
+<div class="row">
+    <div class="col-md-8">
+        <article class="post">
+
+            <header>
+                <div class="post-date">
+                    <span class="glyphicon glyphicon-calendar"></span>
+                    <time datetime="2015年10月21日">
+                        2015年10月21日
+                    </time>
+                </div>
+                <h1 class="post-title">
+                    <a href="http://www.xiaoqiyiye.com/2015/10/21/spring/">SpringMVC源码分析(1) DispatchServlet初始化</a>
+                </h1>
+            </header>
+
+            <div class="post-content">
+                <p>&#160;&#160;&#160;&#160;&#160;&#160;
+这篇文章我们来分析一下SpringMVC中DispatchServlet的启动过程。我们还是先从配置文件来看，因为配置文件会最直观地告诉我们从哪里开始分析。在使用SpringMVC时，大家都知道需要在web.xml中如下配置：</p>
+
+<pre><code>&lt;servlet&gt;
+ &lt;servlet-name&gt;dispatcherServlet&lt;/servlet-name&gt;
+ &lt;servlet-class&gt;org.springframework.web.servlet.DispatcherServlet&lt;/servlet-class&gt;
+ &lt;init-param&gt;
+ 	&lt;param-name&gt;contextConfigLocation&lt;/param-name&gt;
+ 	&lt;param-value&gt;
+ 		classpath:applicationContext-mvc.xml
+ 	&lt;/param-value&gt;
+ &lt;/init-param&gt;
+ &lt;load-on-startup&gt;1&lt;/load-on-startup&gt;
+&lt;/servlet&gt;
+&lt;servlet-mapping&gt;
+ &lt;servlet-name&gt;dispatcherServlet&lt;/servlet-name&gt;
+ &lt;url-pattern&gt;/&lt;/url-pattern&gt;
+&lt;/servlet-mapping&gt;
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+通过如上配置，将SpringMVC的配置文件applicationContext-mvc.xml设置到DispatcherServlet中去。DispatchServlet继承了HttpServlet，因此初始化工作在init()方法中实现。DispatchServlet的继承关系为:
+DispatchServlet &ndash;&gt; FrameworkServlet &ndash;&gt; HttpServletBean &ndash;&gt; HttpServlet。下面我们进入到HttpServletBean#init()方法看看初始化的过程。</p>
+
+<pre><code>public final void init() throws ServletException {
+
+	try {
+        
+        //获取Servlet参数，将信息都存放到BeanWrapper这个对象中去
+		PropertyValues pvs = new ServletConfigPropertyValues(getServletConfig(), this.requiredProperties);
+		BeanWrapper bw = PropertyAccessorFactory.forBeanPropertyAccess(this);
+		ResourceLoader resourceLoader = new ServletContextResourceLoader(getServletContext());
+		bw.registerCustomEditor(Resource.class, new ResourceEditor(resourceLoader, getEnvironment()));
+		
+		//这是一个钩子方法，子类可以去处理BeanWrapper对象
+        initBeanWrapper(bw);
+		bw.setPropertyValues(pvs, true);
+	}
+	catch (BeansException ex) {
+		logger.error(&quot;Failed to set bean properties on servlet '&quot; + getServletName() + &quot;'&quot;, ex);
+		throw ex;
+	}
+
+	// 真正的初始化让子类去完成，也就是FrameworkServlet类
+	initServletBean();
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+接下来，跟踪到FrameworkServlet#initServletBean()，这个方法没什么好说的，就一句重要的代码，initWebApplicationContext()这个方法。这个方法去初始化Spring容器。</p>
+
+<pre><code>protected final void initServletBean() throws ServletException {
+	try {
+        // 初始化Spring容器
+		this.webApplicationContext = initWebApplicationContext();
+		// 钩子方法，可以在容器加载完后，做一些初始化操作。
+        initFrameworkServlet();
+	}
+	catch (ServletException ex) {
+		throw ex;
+	}
+	catch (RuntimeException ex) {
+		throw ex;
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+那么，我们去看看容器是怎么初始化的？</p>
+
+<pre><code>protected WebApplicationContext initWebApplicationContext() {
+
+    // 还记得SpringWeb容器吗
+    // 这里就是去获取SpringWeb容器当作根容器，把它作为SpringMVC的父容器
+	WebApplicationContext rootContext =
+			WebApplicationContextUtils.getWebApplicationContext(getServletContext());
+			
+	WebApplicationContext wac = null;
+
+    // 如果使用了带webApplicationContext参数的构造方法，就调用这里，
+    // 设置父类容器并刷新启动（以上XML配置情况不会执行这里）
+	if (this.webApplicationContext != null) {
+		wac = this.webApplicationContext;
+		if (wac instanceof ConfigurableWebApplicationContext) {
+			ConfigurableWebApplicationContext cwac = (ConfigurableWebApplicationContext) wac;
+			if (!cwac.isActive()) {
+				if (cwac.getParent() == null) {
+					cwac.setParent(rootContext);
+				}
+				configureAndRefreshWebApplicationContext(cwac);
+			}
+		}
+	}
+
+    // 从ServletContext中找，看是否有容器存在
+	if (wac == null) {
+		wac = findWebApplicationContext();
+	}
+    
+    // 如果没有找到，则去创建一个新的容器，并设置rootContext为父容器
+	if (wac == null) {
+	    // 这里会启动容器
+		wac = createWebApplicationContext(rootContext);
+	}
+
+    // 判断是否已经触发过监听器，如果没有则会调用onRefresh(wac)
+    // 否则，表示容器已经启动过，refreshEventReceived=true，不会再调用。         
+    // 具体细节可查看FrameworkServlet内部类ContextRefreshListener。
+    // onRefresh(wac)是一个钩子方法，具体实现是在DispatcherServlet中实现的
+    // 这个方法主要初始化了一系列的SpringMVC相关对象（策略对象）
+	if (!this.refreshEventReceived) {
+		onRefresh(wac);
+	}
+
+    // 把新的容器作为属性设置到ServletContext中
+    // attrName属性key为&quot;FrameworkServlet.CONTEXT.&quot; + servletName
+	if (this.publishContext) {
+		String attrName = getServletContextAttributeName();
+		getServletContext().setAttribute(attrName, wac);
+	}
+
+	return wac;
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+到目前为止，我们还没有看看容器真正启动，启动是在createWebApplicationContext(rootContext)中完成的。</p>
+
+<pre><code>protected WebApplicationContext createWebApplicationContext(ApplicationContext parent) {
+
+    // 获取容器的类型，可以在web.xml中设置contextClass参数配置
+	Class&lt;?&gt; contextClass = getContextClass();
+
+    // 实例化容器对象
+	ConfigurableWebApplicationContext wac =
+			(ConfigurableWebApplicationContext) BeanUtils.instantiateClass(contextClass);
+
+	wac.setEnvironment(getEnvironment());
+	
+    // 设置Spring Web容器作为父容器
+	wac.setParent(parent);
+    // 设置在web.xml中配置的applicationContext-mvc.xml配置文件
+	wac.setConfigLocation(getContextConfigLocation());
+
+    // 开始启动容器
+	configureAndRefreshWebApplicationContext(wac);
+
+	return wac;
+}
+
+protected void configureAndRefreshWebApplicationContext(ConfigurableWebApplicationContext wac) {
+    
+    // 设置Servlet相关信息
+	wac.setServletContext(getServletContext());
+	wac.setServletConfig(getServletConfig());
+	wac.setNamespace(getNamespace());
+
+    // 添加容器监听器
+	wac.addApplicationListener(new SourceFilteringListener(wac, new ContextRefreshListener()));
+
+	// 这是一个钩子方法，负责context的后置处理，其实和下面的applyInitializers(wac)一样
+	postProcessWebApplicationContext(wac);
+
+    // 在容器启动前，可以自定义容器初始化，配置参数contextInitializerClasses可以实现，只能配置ApplicationContextInitializer实现类，这个和Spring Web启动时一样，参见ContextLoaderListener。
+	applyInitializers(wac);
+
+    // 启动容器
+	wac.refresh();
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+到目前为止，Dispatcher的初始化已经分析的差不多了，和前面分析的SpringMVC容器启动基本上相似。上面提到了onRefresh(wac)方法，这个方法是初始化的尾声了，看看onRefresh(wac)方法做了什么事情，怎么把我们带进SpringMVC的世界呢？</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+在onRefresh(wac)中就调用了initStrategies(context)，如下：</p>
+
+<pre><code>protected void initStrategies(ApplicationContext context) {
+	initMultipartResolver(context);
+	initLocaleResolver(context);
+	initThemeResolver(context);
+	initHandlerMappings(context);
+	initHandlerAdapters(context);
+	initHandlerExceptionResolvers(context);
+	initRequestToViewNameTranslator(context);
+	initViewResolvers(context);
+	initFlashMapManager(context);
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+看到上面的代码，似乎让我们熟悉起来，这些都是SpringMVC中关键的接口。上面的初始化方法处理的方式都很相似，这里就不一一分析了，分析下initHanderMappings(context)就可以了，只需明白在DispatcherServlet开始处理请求分发时，这些对象都已经初始化好了。</p>
+
+<pre><code>private void initHandlerMappings(ApplicationContext context) {
+	this.handlerMappings = null;
+
+    // 是否检测所有的HandlerMapping（也会去父容器检测）
+    // 也就是说检测我们是否在配置文件中配置了HandlerMapping接口的Bean
+	if (this.detectAllHandlerMappings) {
+		Map&lt;String, HandlerMapping&gt; matchingBeans =
+				BeanFactoryUtils.beansOfTypeIncludingAncestors(context, HandlerMapping.class, true, false);
+		if (!matchingBeans.isEmpty()) {
+			this.handlerMappings = new ArrayList&lt;HandlerMapping&gt;(matchingBeans.values());
+			// 排序
+			OrderComparator.sort(this.handlerMappings);
+		}
+	}
+	else {
+		try {
+            // 只检测一个HandlerMapping，根据默认handlerMapping的Bean名称去查找。
+			HandlerMapping hm = context.getBean(HANDLER_MAPPING_BEAN_NAME, HandlerMapping.class);
+			this.handlerMappings = Collections.singletonList(hm);
+		}
+		catch (NoSuchBeanDefinitionException ex) {
+		}
+	}
+
+    // 如果还是没有检测到，则确保有一个默认的HandlerMapping存在，
+    // 这个默认的HandlerMapping是BeanNameUrlHandlerMapping，
+    // SpringMVC的默认策略是配置在DispatcherServlet.properties属性文件中。
+	if (this.handlerMappings == null) {
+		this.handlerMappings = getDefaultStrategies(context, HandlerMapping.class);
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+这样SpringMVC中的HandlerMapping接口实现类就已经初始化好了，其他接口的初始化处理过程也是类似的，就不一一分析了。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+关于默认的配置文件DispatcherServlet.properties，提供了8个接口的默认类型。DispatcherServlet.properties文件如下：</p>
+
+<pre><code>org.springframework.web.servlet.LocaleResolver=org.springframework.web.servlet.i18n.AcceptHeaderLocaleResolver
+
+org.springframework.web.servlet.ThemeResolver=org.springframework.web.servlet.theme.FixedThemeResolver
+
+org.springframework.web.servlet.HandlerMapping=org.springframework.web.servlet.handler.BeanNameUrlHandlerMapping,\
+	org.springframework.web.servlet.mvc.annotation.DefaultAnnotationHandlerMapping
+
+org.springframework.web.servlet.HandlerAdapter=org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter,\
+	org.springframework.web.servlet.mvc.SimpleControllerHandlerAdapter,\
+	org.springframework.web.servlet.mvc.annotation.AnnotationMethodHandlerAdapter
+
+org.springframework.web.servlet.HandlerExceptionResolver=org.springframework.web.servlet.mvc.annotation.AnnotationMethodHandlerExceptionResolver,\
+	org.springframework.web.servlet.mvc.annotation.ResponseStatusExceptionResolver,\
+	org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver
+
+org.springframework.web.servlet.RequestToViewNameTranslator=org.springframework.web.servlet.view.DefaultRequestToViewNameTranslator
+
+org.springframework.web.servlet.ViewResolver=org.springframework.web.servlet.view.InternalResourceViewResolver
+
+org.springframework.web.servlet.FlashMapManager=org.springframework.web.servlet.support.SessionFlashMapManager
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+关于DispatchServlet启动过程就分析到这里，总结一下DispatchServlet的流程：
+1. 创建容器对象
+2. 启动容器对象(前两步流程和SpringWEB的启动一样的)
+3. 初始化SpringMVC相关联的一些策略接口</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+通过对这篇文章的了解，只是可以启动SpringMVC了，为接下来的SpringMVC使用做准备。但是SpringMVC到底是如何处理请求的呢？这个问题我们在后面的篇章中会分析到。DispatchServlet的核心部分，处理请求分发过程。</p>
+
+            </div>
+
+            <aside>
+                
+                <ul class="list-inline post-tags">
+                    
+                    <li>
+                        <a href="http://www.xiaoqiyiye.com//tags/spring-mvc">
+                            <i class="fa fa-tags"></i>
+                            spring mvc
+                        </a>
+                    </li>
+                    
+                </ul>
+
+                
+                
+                <h3>相关博客</h3>
+                <ul class="post-rels">
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping">SpringMVC源码分析(3) HandlerMapping分析</a></li>
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/">SpringMVC源码分析(2) DispatchServlet请求分发</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                </ul>
+            </aside>
+            
+            
+            <footer>
+
+                <nav>
+                    <ul class="pager">
+
+                        
+                        <li class="previous"><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/"><span aria-hidden="true">&larr;</span> Older</a></li>
+                        
+
+                        <li><a href="http://www.xiaoqiyiye.com//post">All Posts</a></li>
+
+                        
+                        <li class="next"><a href="http://www.xiaoqiyiye.com/2015/10/18/spring/">Newer <span aria-hidden="true">&rarr;</span></a></li>
+                        
+
+                    </ul>
+                </nav>
+
+                
+                
+                
+            </footer>
+
+        </article>
+    </div>
+    <div class="col-md-4">
+        
+<aside>
+    <div class="row">
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">最近博客</h2>
+                </div>
+                <div class="list-group">
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/" class="list-group-item">SpringCache (4) CacheInterceptor、</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/" class="list-group-item">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/" class="list-group-item">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/" class="list-group-item">SpringCache源码分析(1)  CacheManager和Cache</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping" class="list-group-item">SpringMVC源码分析(3) HandlerMapping分析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/" class="list-group-item">SpringMVC源码分析(2) DispatchServlet请求分发</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/21/spring/" class="list-group-item">SpringMVC源码分析(1) DispatchServlet初始化</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/18/spring/" class="list-group-item">SpringWeb源码分析(1) Web容器启动</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/about/" class="list-group-item">关于我</a>
+                    
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">分类</h2>
+                </div>
+                <div class="list-group">
+                    
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring" class="list-group-item">
+                        <span class="badge">1</span>
+                        spring
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-cache" class="list-group-item">
+                        <span class="badge">4</span>
+                        spring-cache
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-mvc" class="list-group-item">
+                        <span class="badge">3</span>
+                        spring-mvc
+                    </a>
+                    
+                </div>
+            </div>
+        </div>
+
+    </div>
+</aside>
+
+    </div>
+</div>
+
+</div>
+<hr>
+
+<footer class="container copy">
+    <p>&copy; 2016  linya </p>
+	<p>Powered by <a href="http://github.com/xiaoqiyiye" target="_blank">Xiaoqiyiye</a></p>
+	<p>Email: linya_xiaoqiyiye@126.com</p>
+</footer>
+
+<script src="//code.jquery.com/jquery-2.1.3.min.js"></script>
+<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>
+<script src="//yandex.st/highlightjs/8.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+ga('create', '', 'auto');
+ga('send', 'pageview');
+
+</script>
+
+<script>
+document.write('<script src="//sharebutton.net/plugin/sharebutton.php?type=horizontal&u=' + encodeURIComponent(document.location.href) + '"></scr' + 'ipt>');
+</script>
+

@@ -1,0 +1,1413 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+    <channel>
+        <title>Spring Cache on Xiaoqiyiye</title>
+        <link>http://www.xiaoqiyiye.com/tags/spring-cache/</link>
+        <language>zh-CN</language>
+        <author>xiaoqiyiye</author>
+        <rights>Copyright (c) 2015-2016, xiaoqiyiye all rights reserved.</rights>
+        <updated>Sun, 24 Jan 2016 13:00:00 &#43;0800</updated>
+        
+        <item>
+            <title>SpringCache (4) CacheInterceptor、</title>
+            <link>http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/</link>
+            <pubDate>Sun, 24 Jan 2016 13:00:00 &#43;0800</pubDate>
+            <author>CoderZh</author>
+            <guid>http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/</guid>
+            <description>
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;缓存拦截器的实现&#34;&gt;缓存拦截器的实现&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+这一篇我们讲讲SpringCache对方法的拦截器实现，也就是CacheInterceptor。在使用SpringCache我们会比较关注的问题，为什么对一个方法使用@CachePut注解后，就可以达到缓存的效果呢？下面我们将揭开这层面纱。Spring Cache实现对方法的拦截功能，是由CacheInterceptor提供的。下面直接看看CacheInterceptor是怎么做的呢？&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheInterceptor实现了MethodInterceptor接口，在Spring AOP中，MethodInterceptor的功能是做方法拦截。现在应该明白，为什么使用@CachePut等注解后可以实现缓存操作，因为方法被拦截处理了。CacheInterceptor的实现很简单，啥都不用啰说了，先看看代码实现。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public class CacheInterceptor extends CacheAspectSupport implements MethodInterceptor, Serializable {
+
+	/*
+	 *被拦截的方法都会调用invoke方法，不懂的可以先看看Spring AOP。
+	 */
+	@Override
+	public Object invoke(final MethodInvocation invocation) throws Throwable {
+		Method method = invocation.getMethod();
+		
+		//这里就是对执行方法调用的一次封装，主要是为了处理对异常的包装。
+		CacheOperationInvoker aopAllianceInvoker = new CacheOperationInvoker() {
+			@Override
+			public Object invoke() {
+				try {
+					return invocation.proceed();
+				}
+				catch (Throwable ex) {
+					throw new ThrowableWrapper(ex);
+				}
+			}
+		};
+
+		try {
+			//真正地去处理缓存操作的执行，很显然这是父类的方法，所以我们要到父类CacheAspectSupport中去看看。
+			return execute(aopAllianceInvoker, invocation.getThis(), method, invocation.getArguments());
+		}
+		catch (CacheOperationInvoker.ThrowableWrapper th) {
+			throw th.getOriginal();
+		}
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+下面，我们再看看CacheAspectSupport#execute(&amp;hellip;)这个方法中具体怎么进行缓存操作的。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;protected Object execute(CacheOperationInvoker invoker, Object target, Method method, Object[] args) {
+
+	//标志Spring加载元素是否都准备好了，是否可以执行了
+	if (this.initialized) {
+		Class&amp;lt;?&amp;gt; targetClass = getTargetClass(target);
+		//这里使用的就是CacheOperationSource，来获取执行方法上所有的缓存操作集合。如果有缓存操作则执行到execute(...)，如果没有就执行invoker.invoke()直接调用执行方法了。
+		Collection&amp;lt;CacheOperation&amp;gt; operations = getCacheOperationSource().getCacheOperations(method, targetClass);
+		if (!CollectionUtils.isEmpty(operations)) {
+			return execute(invoker, new CacheOperationContexts(operations, method, args, target, targetClass));
+		}
+	}
+
+	return invoker.invoke();
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在上面的代码中出现了CacheOperationContexts对象，这个对象只是为了便于获取每种具体缓存操作集合。我们知道所有的缓存操作CachePutOperation、CacheableOperation、CacheEvictOperation都存放在operations这个集合中，不便于获取具体的缓存操作，所以封装成了缓存操作上下文CacheOperationContexts这个类。接下来，我们继续看看核心代码，庐山真面目即将揭晓。先罗列一下@CachePut、@Cacheable、@CacheEvict的功能，再来看看代码是怎么实现的。&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;@CachePut  &amp;ndash; 执行方法后，将方法返回结果存放到缓存中。不管有没有缓存过，执行方法都会执行，并缓存返回结果（unless可以否决进行缓存）。（当然，这里说的缓存都要满足condition条件）&lt;/li&gt;
+&lt;li&gt;@Cacheable &amp;ndash; 如果没有缓存过，获取执行方法的返回结果；如果缓存过，则直接从缓存中获取，不再执行方法。&lt;/li&gt;
+&lt;li&gt;@CacheEvict &amp;ndash; 如果设置了beforeIntercepte则在方法执行前进行缓存删除操作，如果没有，则在执行方法调用完后进行缓存删除操作。&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;pre&gt;&lt;code&gt;private Object execute(CacheOperationInvoker invoker, CacheOperationContexts contexts) {
+
+	// 处理beforeIntercepte=true的缓存删除操作
+	processCacheEvicts(contexts.get(CacheEvictOperation.class), true, ExpressionEvaluator.NO_RESULT);
+
+	// 从缓存中查找，是否有匹配@Cacheable的缓存数据
+	Cache.ValueWrapper cacheHit = findCachedItem(contexts.get(CacheableOperation.class));
+
+	// 如果@Cacheable没有被缓存，那么就需要将数据缓存起来，这里将@Cacheable操作收集成CachePutRequest集合，以便后续做@CachePut缓存数据存放。
+	List&amp;lt;CachePutRequest&amp;gt; cachePutRequests = new LinkedList&amp;lt;CachePutRequest&amp;gt;();
+	if (cacheHit == null) {
+		collectPutRequests(contexts.get(CacheableOperation.class), ExpressionEvaluator.NO_RESULT, cachePutRequests);
+	}
+
+	Cache.ValueWrapper result = null;
+
+	// 如果没有@CachePut操作，就使用@Cacheable获取的结果（可能也没有@Cableable，所以result可能为空）。
+	// hasCachePut(contexts)判断是否有可缓存的操作，这里处理了@Cacheable、@CachePut中unless否决缓存的情况，关于unless后面会分析到。
+	if (cachePutRequests.isEmpty() &amp;amp;&amp;amp; !hasCachePut(contexts)) {
+		result = cacheHit;
+	}
+
+	// 1. 既然从缓存中没有获取到数据，那么就执行方法内容吧。
+	// 2. 如果有@CachePut，那么result肯定为null，所以@CachePut操作之前，肯定会先调用执行方法内容。
+	// 3. 如果执行了方法，那么这里的result就是执行方法返回的结果。
+	if (result == null) {
+		result = new SimpleValueWrapper(invokeOperation(invoker));
+	}
+
+	// 收集@CachePut操作
+	collectPutRequests(contexts.get(CachePutOperation.class), result.get(), cachePutRequests);
+
+	// 处理@CachePut操作，将数据result数据存放到缓存中去。
+	for (CachePutRequest cachePutRequest : cachePutRequests) {
+		cachePutRequest.apply(result.get());
+	}
+
+	// 处理一般的@CacheEvict缓存删除操作情况，也就是beforeIntercepte=false的情况。
+	processCacheEvicts(contexts.get(CacheEvictOperation.class), false, result.get());
+
+	//返回方法执行的返回结果
+	return result.get();
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+上面已经分析了@CachePut、@Cacheable、@CacheEvict注解功能的具体功能实现，Spring Cache的功能基本已经了解的差不多了。但是，我们从之前的CacheOperation、CacheAnnotationParser、CacheAnnotationSource、CacheInterceptor一路分析过来，但是还是发现少了些什么。不禁会想CacheManager和Cache在哪里？唯独缺少了我们在applicationContext.xml中配置的CacheManager和Cache。我们抱着打破沙锅问到底的学习目的，下面接下来看看缓存对象Cache的获取。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;缓存对象cache的获取&#34;&gt;缓存对象Cache的获取&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+首先我们先整理一下上面的CacheAspectSupport#execute(CacheOperationInvoker invoker, CacheOperationContexts contexts)这个方法中出现过的类。CacheOperationContexts、CachePutRequest、CacheOperationContext等等。下面我们将对这些类对象也做下详细的分析。&lt;/p&gt;
+
+&lt;h4 id=&#34;cacheoperationcontexts-获取具体的缓存操作类型&#34;&gt;CacheOperationContexts  获取具体的缓存操作类型&lt;/h4&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+前面提到过，CacheOperationContexts是对Collection&lt;CacheOperation&gt;缓存操作集合做的一次封装处理，目的是为了可以获得具体缓存操作。由于很简单，我们直接分析源码：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;private class CacheOperationContexts {
+
+	//保存每种类型缓存操作的上下文数据，Map中的key是CacheOperation类型，也就是@CachePut、@Cacheable、@CacheEvict对应的3中CacheOperation实现类型。
+	//Map中的value是CacheOperationContext。另外注意，这个Map不是普通的Map，而是一个MultiValueMap，这种Map的key是可以重复存放的。
+	private final MultiValueMap&amp;lt;Class&amp;lt;? extends CacheOperation&amp;gt;, CacheOperationContext&amp;gt; contexts =
+			new LinkedMultiValueMap&amp;lt;Class&amp;lt;? extends CacheOperation&amp;gt;, CacheOperationContext&amp;gt;();
+
+	public CacheOperationContexts(Collection&amp;lt;? extends CacheOperation&amp;gt; operations, Method method,
+			Object[] args, Object target, Class&amp;lt;?&amp;gt; targetClass) {
+		//获取每种CacheOperation类型的缓存操作集合，然后保存到Map中去。
+		for (CacheOperation operation : operations) {
+			this.contexts.add(operation.getClass(), getOperationContext(operation, method, args, target, targetClass));
+		}
+	}
+	
+	//根据CacheOperation类型，直接从Map中获取对应的缓存操作上下文集合
+	//比如： oprationClass为CachePutOperation，那么就是获取的所有@CachePut注解对应的缓存操作的上下文集合
+	public Collection&amp;lt;CacheOperationContext&amp;gt; get(Class&amp;lt;? extends CacheOperation&amp;gt; operationClass) {
+		Collection&amp;lt;CacheOperationContext&amp;gt; result = this.contexts.get(operationClass);
+		return (result != null ? result : Collections.&amp;lt;CacheOperationContext&amp;gt;emptyList());
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+既然通过CacheOperationContexts#get(oprationClass)方法返回的是Collection&lt;CacheOperationContext&gt;，那么，我们是不是应该了解下CacheOperationContext包含哪些信息呢？ 接下来分析CacheOperationContext。&lt;/p&gt;
+
+&lt;h5 id=&#34;cacheoperationcontext-封装缓存参数信息-condition-unless处理&#34;&gt;CacheOperationContext  封装缓存参数信息， condition、unless处理&lt;/h5&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheOperationContext这个类我们要好好地去研究下，为什么呢？ 因为它包含了缓存条件(conditions)的判断，以及缓存对象Cache的获取，这些都是我们在分析源码的时候比较关心的东西。为了更好地理解CacheOperationContext的含义，我们先从属性开始了解，CacheOperationContext提供了一下的属性：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;//缓存操作对象的源数据对象，封装了CacheOperation、method、targetClass、keyGenerator、cacheResolve
+//metadata中的属性是通过CacheOperation中的属性来设置的，也就是@CachePut(keyGeneraor=&amp;quot;kg&amp;quot;, cacheResolve=&amp;quot;cr&amp;quot;)
+//这样就达到了自定义keyGeneraor的效果
+private final CacheOperationMetadata metadata;
+
+//执行方法的参数
+private final Object[] args;
+
+//执行方法的目标类对象
+private final Object target;
+
+//执行方法可以获取到的缓存对象集合，也就是@CachePut等设置的value值关联的那个Cache对象
+private final Collection&amp;lt;? extends Cache&amp;gt; caches;
+
+//执行方法使用缓存注解设置的缓存名称，例如:@CachePut(value=&amp;quot;cacheName&amp;quot;)
+private final Collection&amp;lt;String&amp;gt; cacheNames;
+
+//表示目标类型的执行方法标识的key值
+private final AnnotatedElementKey methodCacheKey;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+接下来，我们看看CacheOperationContext中主要的方法：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;protected class CacheOperationContext implements CacheOperationInvocationContext&amp;lt;CacheOperation&amp;gt; {
+
+	public CacheOperationContext(CacheOperationMetadata metadata, Object[] args, Object target) {
+		this.metadata = metadata;
+		this.args = extractArgs(metadata.method, args);
+		this.target = target;
+		//获取缓存对象Cache
+		this.caches = CacheAspectSupport.this.getCaches(this, metadata.cacheResolver);
+		this.cacheNames = createCacheNames(this.caches);
+		this.methodCacheKey = new AnnotatedElementKey(metadata.method, metadata.targetClass);
+	}
+
+	//这个方法用来判断缓存条件condition
+	protected boolean isConditionPassing(Object result) {
+		//首先判断CacheOperation是否设置了conditions条件
+		//如果没有设置条件，则直接通过条件检测
+		//如果设置了条件，那么通过evaluator去判断（ExpressionEvaluator evaluator 会通过SpEL表达式去检测）
+		if (StringUtils.hasText(this.metadata.operation.getCondition())) {
+			EvaluationContext evaluationContext = createEvaluationContext(result);
+			return evaluator.condition(this.metadata.operation.getCondition(),
+					this.methodCacheKey, evaluationContext);
+		}
+		return true;
+	}
+
+	//处理@Cacheable、@CachePut中unless，如果unless通过SpEL检测，则否决存放缓存
+	protected boolean canPutToCache(Object value) {
+		String unless = &amp;quot;&amp;quot;;
+		if (this.metadata.operation instanceof CacheableOperation) {
+			unless = ((CacheableOperation) this.metadata.operation).getUnless();
+		}
+		else if (this.metadata.operation instanceof CachePutOperation) {
+			unless = ((CachePutOperation) this.metadata.operation).getUnless();
+		}
+		if (StringUtils.hasText(unless)) {
+			EvaluationContext evaluationContext = createEvaluationContext(value);
+			return !evaluator.unless(unless, this.methodCacheKey, evaluationContext);
+		}
+		return true;
+	}
+
+	/**
+	 * Cache中的key值都是通过KeyGenerator来生成的，默认使用了SimpleKeyGenerator。
+	 */
+	protected Object generateKey(Object result) {
+		if (StringUtils.hasText(this.metadata.operation.getKey())) {
+			EvaluationContext evaluationContext = createEvaluationContext(result);
+			return evaluator.key(this.metadata.operation.getKey(), this.methodCacheKey, evaluationContext);
+		}
+		//使用KeyGenerator生成Cache中的缓存key值
+		return this.metadata.keyGenerator.generate(this.target, this.metadata.method, this.args);
+	}
+
+	//EvaluationContext对象用于SpEL表达式检测，关于SpEL不做深入分析
+	private EvaluationContext createEvaluationContext(Object result) {
+		return evaluator.createEvaluationContext(
+				this.caches, this.metadata.method, this.args, this.target, this.metadata.targetClass, result);
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h5 id=&#34;cacheresolver-获取缓存对象cache&#34;&gt;CacheResolver 获取缓存对象Cache&lt;/h5&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在CacheOperationContext的构造方法中，使用了this.caches = CacheAspectSupport.this.getCaches(this, metadata.cacheResolver)来设置caches。我们看看CacheResolver是如何解析出Cache对象的。我们直接到AbstractCacheResolver#resolveCaches(CacheOperationInvocationContext&amp;lt;?&amp;gt; context)这个方法中去。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public Collection&amp;lt;? extends Cache&amp;gt; resolveCaches(CacheOperationInvocationContext&amp;lt;?&amp;gt; context) {
+
+	//获取缓存名称，默认使用SimpleCacheResolver，也就是获取@CachePut(value={&amp;quot;cacheName1&amp;quot;, &amp;quot;cacheName2&amp;quot;})注解中的值。
+	Collection&amp;lt;String&amp;gt; cacheNames = getCacheNames(context);
+	if (cacheNames == null) {
+		return Collections.emptyList();
+	}
+	else {
+		//通过缓存名称，从CacheManager中去找到关联的Cache对象。
+		Collection&amp;lt;Cache&amp;gt; result = new ArrayList&amp;lt;Cache&amp;gt;();
+		for (String cacheName : cacheNames) {
+			Cache cache = this.cacheManager.getCache(cacheName);
+			if (cache == null) {
+				throw new IllegalArgumentException(&amp;quot;Cannot find cache named &#39;&amp;quot; +
+						cacheName + &amp;quot;&#39; for &amp;quot; + context.getOperation());
+			}
+			result.add(cache);
+		}
+		return result;
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+缓存对象Cache我们已经获取到了，接下来就应该可以调用缓存操作了吧，比如put(key,value)方法。 接下来我们继续分析CachePutRequest对象。&lt;/p&gt;
+
+&lt;h5 id=&#34;cacheputrequest-缓存存放操作请求&#34;&gt;CachePutRequest  缓存存放操作请求&lt;/h5&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CachePutRequest很简单，就是请求将方法返回结果result以key存放到缓存对象Cache中去，调用了doPut方法， 这是CacheInterceptor父类AbstractCacheInvoker提供的，很简单，就不贴源码了。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;private class CachePutRequest {
+
+	private final CacheOperationContext context;
+
+	private final Object key;
+
+	public CachePutRequest(CacheOperationContext context, Object key) {
+		this.context = context;
+		this.key = key;
+	}
+
+	public void apply(Object result) {
+		if (this.context.canPutToCache(result)) {
+			for (Cache cache : this.context.getCaches()) {
+				doPut(cache, this.key, result);
+			}
+		}
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;总结&#34;&gt;总结&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+用了好几篇来讲述SpringCache是怎么处理@CachePut、@Cacheable、@CacheEvict操作的，按照我们之前的思路一路分析过来：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;CacheOperation封装了@CachePut、@Cacheable、@CacheEvict的属性信息，以便于能够获得被拦截方法的缓存操作集合。&lt;/li&gt;
+&lt;li&gt;CacheAnnotationParser将@CachePut、@Cacheable、@CacheEvict注解解析成CacheOperation集合。(也包含了对@Caching、@CacheConfig的解析)&lt;/li&gt;
+&lt;li&gt;CacheAnnotationSource获取执行方法的缓存操作集合，这个获取的过程是委派给CacheAnnotationParser去做的。CacheAnnotationParser充当了解析注解的策略接口。&lt;/li&gt;
+&lt;li&gt;CacheInterceptor实现了MethodInterceptor接口，在Spring AOP中实现对执行方法的拦截。在调用invoke方法时，是通过调用CacheAnnotationSource来获取缓存操作集合的。&lt;/li&gt;
+&lt;li&gt;CacheInterceptor的父类CacheAspectSupport实现了@CachePut、@Cacheable、@CacheEvict的缓存功能。&lt;/li&gt;
+&lt;li&gt;每一个缓存操作CacheOperation最后被封装成了CacheOperationContext，CacheOperationContext通过CacheResolver解析出缓存对象Cache。&lt;/li&gt;
+&lt;li&gt;最后CacheInterceptor调用了超级父类AbstractCacheInvoker提供的缓存对象Cache的基本方法doPut、doGet、doEvict等方法来缓存数据。&lt;/li&gt;
+&lt;/ol&gt;
+</description>
+        </item>
+        
+        <item>
+            <title>SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</title>
+            <link>http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/</link>
+            <pubDate>Sat, 23 Jan 2016 22:18:00 &#43;0800</pubDate>
+            <author>CoderZh</author>
+            <guid>http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/</guid>
+            <description>
+
+&lt;hr /&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从上一篇中我们提及到，既然方法使用了@CachePut、@Cacheable、@CacheEvict这些注解，那么，执行方法是怎么知道设置了哪些注解信息的呢？ 下面我们分析一下注解的解析。但，在分析之前我们需要知道缓存操作封装类CacheOperation。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;cacheoperation缓存操作封装类&#34;&gt;CacheOperation缓存操作封装类&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheOperation抽象类表示缓存的基本操作，封装了缓存基本操作的一些属性信息，也就是在@CachePut、@Cacheable、@CacheEvict中配置的属性信息。CacheOperation有三个实现类，分别是CachePutOperation、CacheableOperation、CacheEvictOperation，不用说也知道这是对注解信息的封装类。下面简单的看一下CacheOperation封装了哪些信息。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public abstract class CacheOperation implements BasicOperation {
+
+	private String name = &amp;quot;&amp;quot;;
+
+	private Set&amp;lt;String&amp;gt; cacheNames = Collections.emptySet();
+
+	private String key = &amp;quot;&amp;quot;;
+
+	private String keyGenerator = &amp;quot;&amp;quot;;
+
+	private String cacheManager = &amp;quot;&amp;quot;;
+
+	private String cacheResolver = &amp;quot;&amp;quot;;
+
+	private String condition = &amp;quot;&amp;quot;;
+
+	/* 省略了一些setter、getter方法 */
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+这些属性是不是很熟悉，就是在配置@CachePut、@Cacheable、@CacheEvict使用的一些公共属性。CacheOperation没什么好分析的，我们只要知道最终注解信息都被转换成CacheOperation对象就可以了。至于是哪个具体的实现，我们现在还不用关心，后面会知道。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;cacheannotationparser缓存注解解析器&#34;&gt;CacheAnnotationParser缓存注解解析器&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheAnnotationParser接口提供了2个方法，分别对类和方法上的注解进行解析。因为我们知道@CachePut可以在类或方法上进行注解。&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheAnnotationParser这是一个策略接口，它是委派给AnnotationCacheOperationSource来执行的，AnnotationCacheOperationSource内部持有一个CacheAnnotationParser集合，可以执行一系列的CacheAnnotationParser实现。也就是说我们可以自定义像@CachePut一样的注解，然后提供对应的CacheAnnotationParser解析器，达到我们自定义缓存功能的效果。下面是CacheAnnotationParser接口的源码。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;/**
+ * CacheAnnotationParser是为解析注解提供的一个策略接口，AnnotationCacheOperationSource 会委派一些解析器来解析特定的注解类型，像Spring Cache的@Cacheable、@CachePut、@CacheEvict
+ */
+public interface CacheAnnotationParser {
+
+	/**
+     * 对给定类型上的缓存注解进行解析，如果没有则返回null
+	 * @see AnnotationCacheOperationSource#findCacheOperations(Class)
+	 */
+	Collection&amp;lt;CacheOperation&amp;gt; parseCacheAnnotations(Class&amp;lt;?&amp;gt; type);
+
+	/**
+     * 对给定方法上的缓存注解进行解析，如果没有则返回null
+	 * @see AnnotationCacheOperationSource#findCacheOperations(Method)
+	 */
+	Collection&amp;lt;CacheOperation&amp;gt; parseCacheAnnotations(Method method);
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+那么@CachePut、@Cacheable、@CacheEvict到底是哪个类来解析的呢？ 就是，SpringCacheAnnotationParser。下面我们看看SpringCacheAnnotationParser是如何解析注解的，我们还是看看CacheAnnotationParser提供的接口方法，代码如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;@Override
+public Collection&amp;lt;CacheOperation&amp;gt; parseCacheAnnotations(Class&amp;lt;?&amp;gt; type) {
+	//获取@CacheConfig注解信息
+	DefaultCacheConfig defaultConfig = getDefaultCacheConfig(type);
+	//解析其他的缓存注解@Caching、@CachePut、@Cacheable、@CacheEvict
+	return parseCacheAnnotations(defaultConfig, type);
+}
+
+@Override
+
+public Collection&amp;lt;CacheOperation&amp;gt; parseCacheAnnotations(Method method) {
+	DefaultCacheConfig defaultConfig = getDefaultCacheConfig(method.getDeclaringClass());
+	return parseCacheAnnotations(defaultConfig, method);
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从上面的代码可以看出，这2个方法解析方式一样，都调用了相同的方法。第一，解析@CacheConfig注解，调用了getDefaultCacheConfig(Class&amp;lt;?&amp;gt; target)方法；第二，解析其他缓存注解，都调用了parseCacheAnnotations(DefaultCacheConfig cachingConfig, AnnotatedElement ae)这个方法。&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;&lt;p&gt;DefaultCacheConfig获取@CacheConfig注解信息&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt; DefaultCacheConfig getDefaultCacheConfig(Class&amp;lt;?&amp;gt; target) {
+    
+    //直接获取目标类型上的@CacheConfig注解，如果有则将属性信息设置好，如果没有则给定一个默认的DefaultCacheConfig对象。
+    CacheConfig annotation = AnnotationUtils.getAnnotation(target, CacheConfig.class);
+    
+    if (annotation != null) {
+        return new DefaultCacheConfig(annotation.cacheNames(), annotation.keyGenerator(),
+                annotation.cacheManager(), annotation.cacheResolver());
+    }
+    
+    return new DefaultCacheConfig();
+}
+&lt;/code&gt;&lt;/pre&gt;&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;获取CacheOperation集合信息&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;protected Collection&amp;lt;CacheOperation&amp;gt; parseCacheAnnotations(DefaultCacheConfig cachingConfig, AnnotatedElement ae) {
+    
+    Collection&amp;lt;CacheOperation&amp;gt; ops = null;
+    
+    //解析@Cacheable
+    Collection&amp;lt;Cacheable&amp;gt; cacheables = getAnnotations(ae, Cacheable.class);
+    if (cacheables != null) {
+        ops = lazyInit(ops);
+        for (Cacheable cacheable : cacheables) {
+            ops.add(parseCacheableAnnotation(ae, cachingConfig, cacheable));
+        }
+    }
+    
+    //解析@CacheEvict
+    Collection&amp;lt;CacheEvict&amp;gt; evicts = getAnnotations(ae, CacheEvict.class);
+    if (evicts != null) {
+        ops = lazyInit(ops);
+        for (CacheEvict evict : evicts) {
+            ops.add(parseEvictAnnotation(ae, cachingConfig, evict));
+        }
+    }
+    
+    //解析@CachePut
+    Collection&amp;lt;CachePut&amp;gt; puts = getAnnotations(ae, CachePut.class);
+    if (puts != null) {
+        ops = lazyInit(ops);
+        for (CachePut put : puts) {
+            ops.add(parsePutAnnotation(ae, cachingConfig, put));
+        }
+    }
+    
+    //解析@Caching
+    Collection&amp;lt;Caching&amp;gt; cachings = getAnnotations(ae, Caching.class);
+    if (cachings != null) {
+        ops = lazyInit(ops);
+        for (Caching caching : cachings) {
+            ops.addAll(parseCachingAnnotation(ae, cachingConfig, caching));
+        }
+    }
+        
+    //最后，返回解析出来的所有缓存操作对象CacheOperation集合
+    return ops;
+}
+&lt;/code&gt;&lt;/pre&gt;&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+这些代码虽然很简单，但是有些细节还是需要说明：
+1. 如果存在自定义注解使用了@CachePut等这些缓存注解，该怎么解析呢？ 到底需不需解析到？
+2. 前面说过@CachConfig是一个总注解配置，那么，@CacheConfig的注解信息如何优先于其他注解信息呢？
+3. 在@CachePut、@Cacheable、@CacheEvict注解信息中，key和keyGenerator是排它性的，cacheManager和cacheResolve也是排它性的，为什么呢？&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+答案就在我们的眼前，下面我们看看 getAnnotations(AnnotatedElement ae, Class&lt;T&gt; annotationType) 和 parsePutAnnotation(AnnotatedElement ae, DefaultCacheConfig defaultConfig, CachePut cachePut) （三个方法之选一个说明，其他两个都一样）&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h4 id=&#34;自定义注解中存在-cacheput等缓存注解&#34;&gt;自定义注解中存在@CachePut等缓存注解&lt;/h4&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+假设我们自定以了一个注解类型@UserCache，如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Cacheable(value=&amp;quot;user&amp;quot;)
+public @interface UserCache{
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+如果一个方法使用了@UserCache，那么，@UserCache中使用的@Cacheable是否也应该包含该方法的缓存注解解析中去呢？ 答案是肯定的，需要包含。但是如果注解层级关系不止一层，如果是二层注解关系，又会是怎样的呢？多层次的注解关系是不会被解析到的。下面看看getAnnotations()这个方法，分析如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;private &amp;lt;T extends Annotation&amp;gt; Collection&amp;lt;T&amp;gt; getAnnotations(AnnotatedElement ae, Class&amp;lt;T&amp;gt; annotationType) {
+
+	Collection&amp;lt;T&amp;gt; anns = new ArrayList&amp;lt;T&amp;gt;(2);
+
+	//查找原生的注解
+	T ann = ae.getAnnotation(annotationType);
+	if (ann != null) {
+		anns.add(AnnotationUtils.synthesizeAnnotation(ann, ae));
+	}
+
+	//扫描注解中的注解，注意：这里只包含了一层注解关系，如果出现多层次的注解关系是扫描不到的！
+	for (Annotation metaAnn : ae.getAnnotations()) {
+		ann = metaAnn.annotationType().getAnnotation(annotationType);
+		if (ann != null) {
+			anns.add(AnnotationUtils.synthesizeAnnotation(ann, ae));
+		}
+	}
+
+	return (anns.isEmpty() ? null : anns);
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h4 id=&#34;cacheconfig的高优先级别&#34;&gt;@CacheConfig的高优先级别&lt;/h4&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+前面早已说明过@CacheConfig的作用要高于@CachePut、@Cacheable、@CacheEvict，但是，为什么呢？这些也只能算是我们的道听途说。作为一个Coding，我们不要那些道听途说，别人说的不一定是对的。下面的代码会给你一个真理，让你也知道：哦，原来就是这么简单！ 我们就拿@CachePut的解析来说，下面是解析的方法。（@Cacheable、@CacheEvict一样就不赘述啦）&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;CacheOperation parsePutAnnotation(AnnotatedElement ae, DefaultCacheConfig defaultConfig, CachePut cachePut) {
+
+	CachePutOperation op = new CachePutOperation();
+	op.setCacheNames(cachePut.cacheNames());
+	op.setCondition(cachePut.condition());
+	op.setUnless(cachePut.unless());
+	op.setKey(cachePut.key());
+	op.setKeyGenerator(cachePut.keyGenerator());
+	op.setCacheManager(cachePut.cacheManager());
+	op.setCacheResolver(cachePut.cacheResolver());
+	op.setName(ae.toString());
+
+	//这里会去对op对象做一次重新的设定，到底做了什么，我想你会懂的！
+	//这里会把@CacheConfig中配置的注解信息重新设置一边，也就是覆盖前面设置过的值。
+	defaultConfig.applyDefault(op);
+	validateCacheOperation(ae, op);
+
+	return op;
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h4 id=&#34;key和keygenerator-cachemanager和cacheresolve排它性&#34;&gt;key和keyGenerator、cacheManager和cacheResolve排它性&lt;/h4&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从下面的代码中，很容易知道，如果key和keyGenerator、cacheManager和cacheResolve同时存在就会抛出异常了。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;private void validateCacheOperation(AnnotatedElement ae, CacheOperation operation) {
+
+	if (StringUtils.hasText(operation.getKey()) &amp;amp;&amp;amp; StringUtils.hasText(operation.getKeyGenerator())) {
+		throw new IllegalStateException(&amp;quot;Invalid cache annotation configuration on &#39;&amp;quot; +
+				ae.toString() + &amp;quot;&#39;. Both &#39;key&#39; and &#39;keyGenerator&#39; attributes have been set. &amp;quot; +
+				&amp;quot;These attributes are mutually exclusive: either set the SpEL expression used to&amp;quot; +
+				&amp;quot;compute the key at runtime or set the name of the KeyGenerator bean to use.&amp;quot;);
+	}
+
+	if (StringUtils.hasText(operation.getCacheManager()) &amp;amp;&amp;amp; StringUtils.hasText(operation.getCacheResolver())) {
+		throw new IllegalStateException(&amp;quot;Invalid cache annotation configuration on &#39;&amp;quot; +
+				ae.toString() + &amp;quot;&#39;. Both &#39;cacheManager&#39; and &#39;cacheResolver&#39; attributes have been set. &amp;quot; +
+				&amp;quot;These attributes are mutually exclusive: the cache manager is used to configure a&amp;quot; +
+				&amp;quot;default cache resolver if none is set. If a cache resolver is set, the cache manager&amp;quot; +
+				&amp;quot;won&#39;t be used.&amp;quot;);
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+@CacheConfig、@Caching、@CachePut、@Cacheable、@CacheEvict这些缓存注解的解析分析完了，总结一句话，就是将缓存注解都解析成了Collection&amp;lt;CacheOperation&amp;gt;对象。&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+解析成Collection&amp;lt;CacheOperation&amp;gt;对象，什么时候调用呢？ 前面提及过CacheAnnotationParser提供了对缓存注解的解析策略。具体的调用并不是由CacheAnnotationParser直接处理的，而是由AnnotationCacheOperationSource委派给CacheAnnotationParser来处理。AnnotationCacheOperationSource是CacheOperationSource接口的实现类，也就是说调用工作是由CacheOperationSource来负责的。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;cacheoperationsource-缓存操作调用&#34;&gt;CacheOperationSource 缓存操作调用&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+下面，我们直接了当地看CacheOperationSource接口的定义：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;/**
+
+ * 这个接口是由CacheInterceptor使用
+ * Interface used by {@link CacheInterceptor}. Implementations know how to source
+ */
+public interface CacheOperationSource {
+
+	/**
+     * 方法功能很明确：为一个执行方法返回所有缓存注解的缓存操作集合
+	 */
+	Collection&amp;lt;CacheOperation&amp;gt; getCacheOperations(Method method, Class&amp;lt;?&amp;gt; targetClass);
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+现在，我们的思路应该很清楚了。那就是，CacheInterceptor调用了CacheOperationSource，CacheOperationSource委派给CacheAnnotationParser去解析执行方法上的注解，然后返回一个Collection&lt;CacheOperation&gt;给CacheInterceptor。就是这样！&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheInterceptor怎么调用了CacheOperationSource我们现在暂且不管，下一篇中分析。 下面，我们看看，CacheOperationSource如何委派CacheAnnotationParser解析注解。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h5 id=&#34;annotationcacheoperationsource-委派给注解解析器&#34;&gt;AnnotationCacheOperationSource 委派给注解解析器&lt;/h5&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+AnnotationCacheOperationSource的继承关系是： AnnotationCacheOperationSource &amp;ndash;&amp;gt; AbstractFallbackCacheOperationSource &amp;ndash;&amp;gt; CacheOperationSource。所以我们还是先从AbstractFallbackCacheOperationSource开始分析，然后分析AnnotationCacheOperationSource。&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+首先，看看AbstractFallbackCacheOperationSource提供的属性和实现CacheOperationSource的接口方法：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public abstract class AbstractFallbackCacheOperationSource implements CacheOperationSource {
+
+	/**
+	 * 这里的key是AnnotatedElementKey对象，这个对象只是对执行方法method和目标类型targetClass的包装。
+	 * 也就是说，保证了method+targetClass产生key的唯一性。
+	 */
+	private final Map&amp;lt;Object, Collection&amp;lt;CacheOperation&amp;gt;&amp;gt; attributeCache =
+			new ConcurrentHashMap&amp;lt;Object, Collection&amp;lt;CacheOperation&amp;gt;&amp;gt;(1024);
+
+	/**
+	 * 为调用的方法获取缓存属性，如果方法中找不到，则从类型中找。
+	 */
+	@Override
+	public Collection&amp;lt;CacheOperation&amp;gt; getCacheOperations(Method method, Class&amp;lt;?&amp;gt; targetClass) {
+
+		//获取key，也就是AnnotatedElementKey对象(当作一般的保证key唯一性标志就好了)
+		Object cacheKey = getCacheKey(method, targetClass);
+
+		//从Map中获取，如果获取不到，则进行解析
+		Collection&amp;lt;CacheOperation&amp;gt; cached = this.attributeCache.get(cacheKey);
+
+		if (cached != null) {
+			return (cached != NULL_CACHING_ATTRIBUTE ? cached : null);
+		}
+		else {
+			//解析执行方法的缓存操作集合
+			Collection&amp;lt;CacheOperation&amp;gt; cacheOps = computeCacheOperations(method, targetClass);
+			if (cacheOps != null) {
+				if (logger.isDebugEnabled()) {
+					logger.debug(&amp;quot;Adding cacheable method &#39;&amp;quot; + method.getName() + &amp;quot;&#39; with attribute: &amp;quot; + cacheOps);
+				}
+				this.attributeCache.put(cacheKey, cacheOps);
+			}
+			else {
+				this.attributeCache.put(cacheKey, NULL_CACHING_ATTRIBUTE);
+			}
+			return cacheOps;
+		}
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+上面的代码很容易明白：当一个方法执行时，会去解析该方法的缓存操作集合，解析后放入到attributeCache这个Map中去，以便下次直接获取。&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+但是，是怎么计算一个执行方法的缓存操作集合呢？ 在computeCacheOperations(method, targetClass)这个类中，下面跟进去瞧瞧。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;private Collection&amp;lt;CacheOperation&amp;gt; computeCacheOperations(Method method, Class&amp;lt;?&amp;gt; targetClass) {
+
+	// 判断no-public方法是否可以获取缓存操作集合，子类可以重写allowPublicMethodsOnly()方法，默认返回的是false。
+	if (allowPublicMethodsOnly() &amp;amp;&amp;amp; !Modifier.isPublic(method.getModifiers())) {
+		return null;
+	}
+
+	//方法可能是接口上的，所以需要去找到一个特定的方法。
+	Method specificMethod = ClassUtils.getMostSpecificMethod(method, targetClass);
+	specificMethod = BridgeMethodResolver.findBridgedMethod(specificMethod);
+
+	//首先，试着从方法上找缓存操作集合（这是一个抽象方法）
+	Collection&amp;lt;CacheOperation&amp;gt; opDef = findCacheOperations(specificMethod);
+	if (opDef != null) {
+		return opDef;
+	}
+
+	//其次，再试着从类型上找缓存操作集合（这也是一个抽象方法）
+	opDef = findCacheOperations(specificMethod.getDeclaringClass());
+	if (opDef != null) {
+		return opDef;
+	}
+
+	//如果前面都没有找到，并且specificMethod != method，则从原始执行方法method上去找
+	if (specificMethod != method) {
+		//先从方法上找
+		opDef = findCacheOperations(method);
+		if (opDef != null) {
+			return opDef;
+		}
+
+		//最后，再从类型上找
+		return findCacheOperations(method.getDeclaringClass());
+	}
+	
+	return null;
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从上面的分析可以知道，AbstractFallbackCacheOperationSource做了2件事情：第一，增加了Map作为缓存，以便后续可以直接获取。第二，处理了方法fallback（备援）的情况。&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+接下来，我们需要看看findCacheOperations(specificMethod)和findCacheOperations(specificMethod.getDeclaringClass())这两个抽象方法是怎么实现的了，不用到说，实现类就是AnnotationCacheOperationSource了。我们再想想，有一个接口提供了和这两个类似的方法，那就是CacheAnnotationParser接口。到这里，我们终于把CacheOperationSource和CacheAnnotationParser联系起来了。下面再看看代码是如何实现的：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public class AnnotationCacheOperationSource extends AbstractFallbackCacheOperationSource implements Serializable {
+
+	//定义是否只用public方法可以被缓存操作
+	private final boolean publicMethodsOnly;
+
+	//缓存注解解析器集合
+	private final Set&amp;lt;CacheAnnotationParser&amp;gt; annotationParsers;
+
+	@Override
+	protected Collection&amp;lt;CacheOperation&amp;gt; findCacheOperations(final Class&amp;lt;?&amp;gt; clazz) {
+	
+		//实际上就是遍历annotationParsers
+		return determineCacheOperations(new CacheOperationProvider() {
+			@Override
+			public Collection&amp;lt;CacheOperation&amp;gt; getCacheOperations(CacheAnnotationParser parser) {
+				return parser.parseCacheAnnotations(clazz);
+			}
+		});
+
+	}
+
+	@Override
+	protected Collection&amp;lt;CacheOperation&amp;gt; findCacheOperations(final Method method) {
+
+		return determineCacheOperations(new CacheOperationProvider() {
+			@Override
+			public Collection&amp;lt;CacheOperation&amp;gt; getCacheOperations(CacheAnnotationParser parser) {
+				return parser.parseCacheAnnotations(method);
+			}
+		});
+
+	}
+
+	/**
+	 * 这里就是在遍历CacheAnnotationParser集合了，最后把所有的Collection&amp;lt;CacheOperation&amp;gt;返回
+	 */
+	protected Collection&amp;lt;CacheOperation&amp;gt; determineCacheOperations(CacheOperationProvider provider) {
+
+		Collection&amp;lt;CacheOperation&amp;gt; ops = null;
+		for (CacheAnnotationParser annotationParser : this.annotationParsers) {
+			Collection&amp;lt;CacheOperation&amp;gt; annOps = provider.getCacheOperations(annotationParser);
+			if (annOps != null) {
+				if (ops == null) {
+					ops = new ArrayList&amp;lt;CacheOperation&amp;gt;();
+				}
+				ops.addAll(annOps);
+			}
+		}
+
+		return ops;
+	}
+
+	/**
+	 * 重写了父类的方法，可以配置no-public缓存操作
+	 */
+	@Override
+	protected boolean allowPublicMethodsOnly() {
+		return this.publicMethodsOnly;
+	}
+
+	/**
+	 * 只是为了便于遍历调用CacheAnnotationParser
+	 */
+	protected interface CacheOperationProvider {
+		Collection&amp;lt;CacheOperation&amp;gt; getCacheOperations(CacheAnnotationParser parser);
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3 id=&#34;总结&#34;&gt;总结&lt;/h3&gt;
+
+&lt;ol&gt;
+&lt;li&gt;CacheAnnotationParser将@CachePut等注解解析成CacheOperation集合对象&lt;/li&gt;
+&lt;li&gt;CacheOperationSource委派CacheAnnotationParser来获取解析到的CacheOperation集合&lt;/li&gt;
+&lt;li&gt;CacheInterceptor调用CacheOperationSource&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在下一篇中我们继续分析CacheInterceptor的调用。&lt;/p&gt;
+</description>
+        </item>
+        
+        <item>
+            <title>SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</title>
+            <link>http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/</link>
+            <pubDate>Sat, 23 Jan 2016 20:00:00 &#43;0800</pubDate>
+            <author>CoderZh</author>
+            <guid>http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/</guid>
+            <description>
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在上一篇中我们讲解了CacheManager和Cache源码，学会了怎样使用注解进行缓存，但是对于@CachePut、@Cacheable、@CacheEvict这些注解没有提及到，这一篇中我们将对Spring Cache中提供的注解操作做一个详细的说明。
+&lt;br&gt;&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;cacheput&#34;&gt;@CachePut&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+@CachePut表示需要存放缓存数据，可以在类或方法上进行注解，如果注解在类上，表示这个类的所有方法都使用了@CachePut。这个注解可以设置哪些信息呢？我们直接看源代码，因为源代码能从根本说明一切。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;/**
+ * @CachePut可以注解类和方法，注解类时，表示整个类中的方法都注解了
+ */	
+@Target({ ElementType.METHOD, ElementType.TYPE })
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface CachePut {
+
+	/**
+	 * 定义存放的Cache名称，和下面的cacheNames一样
+	 */
+	@AliasFor(&amp;quot;cacheNames&amp;quot;)
+	String[] value() default {};
+
+	@AliasFor(&amp;quot;value&amp;quot;)
+	String[] cacheNames() default {};
+
+	/**
+     * 为缓存值定义的key，默认为&amp;quot;&amp;quot;，表示所有的参数都加入到key的生成中（使用默认的keyGenerator）
+	 */
+	String key() default &amp;quot;&amp;quot;;
+
+	/**
+     * 可以使用keyGenerator来自定义key的生成，但是keyGenerator和key是排它性的，也就是说key和keyGenerator只能定义其中一个
+	 */
+	String keyGenerator() default &amp;quot;&amp;quot;;
+
+	/**
+     * 指定设置特定的cacheManager，与cacheResolver也是排它性的。
+	 * {@link org.springframework.cache.CacheManager}
+	 */
+	String cacheManager() default &amp;quot;&amp;quot;;
+
+	/**
+     * 自定义cacheResolver
+	 * {@link org.springframework.cache.interceptor.CacheResolver}
+	 */
+	String cacheResolver() default &amp;quot;&amp;quot;;
+
+	/**
+     * 定义缓存被存放的条件，只有满足条件的方法返回值才能被存放。默认为&amp;quot;&amp;quot;，也意味着方法的结果都可以被缓存。
+	 */
+	String condition() default &amp;quot;&amp;quot;;
+
+	/**
+     * unless是在方法调用后判断是否需要进行缓存更新，如果满足unless条件就不缓存。unless具有否决权！
+	 */
+	String unless() default &amp;quot;&amp;quot;;
+
+}
+```	
+
+
+----------
+
+
+### @Cacheable
+
+&amp;amp;#160;&amp;amp;#160;&amp;amp;#160;&amp;amp;#160;
+@Cacheable表示从缓存中取数据，如果缓存中没有数据则执行方法，并将方法返回的结果存入到缓存中，以便下次直接从缓存中获取。@Cacheable可以在类或方法上进行注解，如果注解在类上，表示这个类的所有方法都使用了@Cacheable。由于@Cacheable和@CachePut的定义一样，就不多说明了。
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Cacheable {&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;@AliasFor(&amp;quot;cacheNames&amp;quot;)
+String[] value() default {};
+
+@AliasFor(&amp;quot;value&amp;quot;)
+String[] cacheNames() default {};
+
+String key() default &amp;quot;&amp;quot;;
+
+String keyGenerator() default &amp;quot;&amp;quot;;
+
+String cacheManager() default &amp;quot;&amp;quot;;
+
+String cacheResolver() default &amp;quot;&amp;quot;;
+
+String condition() default &amp;quot;&amp;quot;;
+
+String unless() default &amp;quot;&amp;quot;;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;}&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;
+
+----------
+
+### @CacheEvict
+
+&amp;amp;#160;&amp;amp;#160;&amp;amp;#160;&amp;amp;#160;
+@CacheEvit表示从缓存中删除数据。和@CachePut、@Cacheable的定义基本一样，只有2个参数定义不同，allEntries和beforeInvocation。allEntries表示是否删除指定Cache名称中所有的缓存数据。beforeInvocation表示是否在方法执行前删除缓存数据，因为方法内部可能会出现异常，如果beforeInvocation=false,方法内出现异常，缓存中的数据是不会被删除的。
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface CacheEvict {&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;@AliasFor(&amp;quot;cacheNames&amp;quot;)
+String[] value() default {};
+
+@AliasFor(&amp;quot;value&amp;quot;)
+String[] cacheNames() default {};
+
+String key() default &amp;quot;&amp;quot;;
+
+String keyGenerator() default &amp;quot;&amp;quot;;
+
+String cacheManager() default &amp;quot;&amp;quot;;
+
+String cacheResolver() default &amp;quot;&amp;quot;;
+
+String condition() default &amp;quot;&amp;quot;;
+
+/**
+ * 表示是否删除缓存中所有数据，默认为false,只会删除与key关联的那个缓存数据
+ */
+boolean allEntries() default false;
+
+/**
+ * 表示是否在方法调用之前删除数据，默认为false，表示缓存删除操作是在方法调用之后的
+ */
+boolean beforeInvocation() default false;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;}&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;
+
+----------
+
+### @Caching
+
+&amp;amp;#160;&amp;amp;#160;&amp;amp;#160;&amp;amp;#160;
+@Caching是一个组合式的注解，可以组合配置@CachePut、@Cacheable、@CacheEvict集合，也可以在类或方法上进行注解。
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Caching {&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Cacheable[] cacheable() default {};
+
+CachePut[] put() default {};
+
+CacheEvict[] evict() default {};
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;}
+```&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+了解了@CachePut、@Cacheable、@CacheEvict这些注解的详细使用，那么，接下来我有一个疑惑了，这些注解到底是怎么作用到配置的方法上的呢？ 怎么能够说明一个执行方法就使用了这些注解呢？对，这些注解肯定需要被解析成操作对象！那么，@CachePut、@Cacheable、@CacheEvict会被怎么解析呢？ 这些问题我们在下一篇中做详细的分析。&lt;/p&gt;
+</description>
+        </item>
+        
+        <item>
+            <title>SpringCache源码分析(1)  CacheManager和Cache</title>
+            <link>http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/</link>
+            <pubDate>Fri, 22 Jan 2016 11:00:00 &#43;0800</pubDate>
+            <author>CoderZh</author>
+            <guid>http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/</guid>
+            <description>
+
+&lt;hr /&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+这篇作为Spring Cache源码分析的起始篇，重要在于分析CacheManager和Cache。但是，在分析CacheManager和Cache之前，还是先看一个简单的例子，这样有助于理解Spring Cache的概念，知道Spring Cache在干什么，有什么作用，只有知道了Spring Cache的用处，在分析源码的时候才能知道Spring Cache的功能是怎么实现的！ 这里不讲使用的细节，如果想要了解细节请看其他质料或后面篇章中的详细分析。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;hello示例-下载-https-github-com-xiaoqiyiye-blog-example-tree-master-seven-xiaoqiyiye-spring-cache-hello&#34;&gt;Hello示例 &lt;a href=&#34;https://github.com/xiaoqiyiye/blog-example/tree/master/seven.xiaoqiyiye.spring.cache.hello&#34;&gt;下载&lt;/a&gt;&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+下面直接上示例代码，一个简单的Hello程序，Hello、HelloService、HelloTest。在下面代码中我们用到了注解：@CachePut，@Cacheable，@CacheEvict。从单词意思我们就应该知道这些的作用是什么，@CachePut用于把数据存放到缓存中；@Cacheable用于从缓存中获取数据，如果缓存中不存在就执行代码得到并存放在缓存中去，以便下次从缓存中获取；@CacheEvict用于驱除缓存中的数据。在后面的章节中会详细的讲解这些注解中的每个属性。&lt;/p&gt;
+
+&lt;p&gt;Hello对象：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public class Hello {
+	String name;
+	public Hello(String name){
+		this.name = name;
+	}
+	public String getName() {
+		return name;
+	}
+	@Override
+	public String toString() {
+		return &amp;quot;Hello,&amp;quot; + name;
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;HelloService对象：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;@Service
+public class HelloService {
+	/**
+	 * 以Hello#name属性域作为缓存key（不管缓存是否存在，都会去执行）
+	 * @param hello
+	 * @return
+	 */
+	@CachePut(value=&amp;quot;hello&amp;quot;, key=&amp;quot;#hello.name&amp;quot;)
+	public Hello put(Hello hello){
+		System.out.println(&amp;quot;put Hello:&amp;quot; + hello.getName());
+		return hello;
+	}
+
+	/**
+	 * 以name参数为key
+	 * 如果缓存中没有，则执行代码并缓存
+	 * 如果缓存中已经存在，则直接从缓存中获取
+	 * @param name
+	 * @return
+	 */
+	@Cacheable(value=&amp;quot;hello&amp;quot;, key=&amp;quot;#name&amp;quot;)
+	public Hello get(String name){
+		System.out.println(&amp;quot;new Hello:&amp;quot; + name);
+		return new Hello(name);
+	}
+
+	/**
+	 * 从命名为&amp;quot;hello&amp;quot;的缓存中，删除掉name参数的key
+	 * @param name
+	 */
+	@CacheEvict(value=&amp;quot;hello&amp;quot;, key=&amp;quot;#name&amp;quot;)
+	public void remove(String name){
+		System.out.println(&amp;quot;remove Hello:&amp;quot; + name);
+	}
+
+	/**
+	 * 从命名为&amp;quot;hello&amp;quot;的缓存中，删除所有缓存
+	 */
+	@CacheEvict(value=&amp;quot;hello&amp;quot;, allEntries=true)
+	public void removeAll(){
+		System.out.println(&amp;quot;remove all!&amp;quot;);
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;HelloTest测试：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(locations=&amp;quot;classpath:applicationContext.xml&amp;quot;)
+public class HelloTest extends AbstractJUnit4SpringContextTests{
+
+	@Test
+	public void hello(){
+		HelloService service = applicationContext.getBean(HelloService.class);
+		service.get(&amp;quot;linya&amp;quot;);
+		Hello hello = service.get(&amp;quot;linya&amp;quot;);
+		System.out.println(hello.toString());
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;我们可以试着运行上面的测试文件，但是程序是不能运行的，为什么呢，因为需要配置文件applicationContext.xml。上面我们说过通过注解可以缓存、获取、删除数据，那么数据被缓存到了哪里呢？很显然这样需要applicationContext.xml配置文件来处理，指明数据需要缓存的地方，这个缓存的地方在Spring Cache被定义为Cache和CacheManager，下面我们来看看如何简单的配置Spring Cache。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;&amp;lt;?xml version=&amp;quot;1.0&amp;quot; encoding=&amp;quot;UTF-8&amp;quot;?&amp;gt;
+&amp;lt;beans xmlns=&amp;quot;http://www.springframework.org/schema/beans&amp;quot;
+	xmlns:xsi=&amp;quot;http://www.w3.org/2001/XMLSchema-instance&amp;quot;
+	xmlns:context=&amp;quot;http://www.springframework.org/schema/context&amp;quot;
+	xmlns:cache=&amp;quot;http://www.springframework.org/schema/cache&amp;quot;
+	xsi:schemaLocation=&amp;quot;
+        http://www.springframework.org/schema/beans 
+        http://www.springframework.org/schema/beans/spring-beans-4.1.xsd
+        http://www.springframework.org/schema/context 
+        http://www.springframework.org/schema/context/spring-context-4.1.xsd
+        http://www.springframework.org/schema/cache
+        http://www.springframework.org/schema/cache/spring-cache-4.1.xsd&amp;quot;
+	default-lazy-init=&amp;quot;true&amp;quot;&amp;gt;
+	&amp;lt;context:component-scan base-package=&amp;quot;seven.xiaoqiyiye.spring.cache&amp;quot;/&amp;gt;
+    &amp;lt;context:annotation-config/&amp;gt;
+    
+	&amp;lt;!-- SpringCache驱动一定要配置，后面会详细讲解这个配置的作用 --&amp;gt;
+    &amp;lt;cache:annotation-driven/&amp;gt;
+
+	&amp;lt;!-- 配置CacheManager，CacheManager中管理着Cache集合，在这里配置了一个名称为&amp;quot;hello&amp;quot;的Cache--&amp;gt;
+	&amp;lt;bean id=&amp;quot;cacheManager&amp;quot; class=&amp;quot;org.springframework.cache.support.SimpleCacheManager&amp;quot;&amp;gt;
+        &amp;lt;property name=&amp;quot;caches&amp;quot;&amp;gt;
+            &amp;lt;set&amp;gt;
+                &amp;lt;bean class=&amp;quot;org.springframework.cache.concurrent.ConcurrentMapCacheFactoryBean&amp;quot;&amp;gt;
+                    &amp;lt;property name=&amp;quot;name&amp;quot; value=&amp;quot;hello&amp;quot;/&amp;gt;
+                &amp;lt;/bean&amp;gt;
+            &amp;lt;/set&amp;gt;
+        &amp;lt;/property&amp;gt;
+    &amp;lt;/bean&amp;gt;
+&amp;lt;/beans&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;cachemanager-和-cache&#34;&gt;CacheManager 和 Cache&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheManager定义很简单，用于管理Cache集合，并提供通过Cache名称获取对应Cache对象的方法。下面是CacheManager接口定义：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;/**
+ * Spring&#39;s central cache manager SPI.
+ * Allows for retrieving named {@link Cache} regions.
+ * CacheManager可以通过名称来获取一个Cache对象
+ * @author Costin Leau
+ * @since 3.1
+ */
+public interface CacheManager {
+
+	/**
+	 * 通过name来获取Cache对象
+	 */
+	Cache getCache(String name);
+	
+	/**
+     * 返回这个CacheManager管理的Cache集合的所有Cache名称
+	 */
+	Collection&amp;lt;String&amp;gt; getCacheNames();
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从上面的CacheManager可以知道，每个Cache必须要指定一个name，这个name需要在CacheManager中是唯一的。另外Cache对象还需要支持一些数据操作，存放数据、获取数据、驱除数据等等。下面，我们看看Cache接口的定义：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;/**
+ * Interface that defines common cache operations.
+ */
+public interface Cache {
+
+	/**
+     * 获取该Cache的名称
+	 */
+	String getName();
+
+	/**
+     * 返回底层真是的缓存对象，接口中并不需要关系具体是怎么实现的，
+     * 使用Map、Reids、Guava，Ecache等
+	 */
+	Object getNativeCache();
+
+	/**
+     * 返回被包装的值，主要是为了null的处理
+	 */
+	ValueWrapper get(Object key);
+
+	/**
+     * 返回缓存中指定key的值，并获得这个值的特定类型
+	 */
+	&amp;lt;T&amp;gt; T get(Object key, Class&amp;lt;T&amp;gt; type);
+
+	/**
+     * 存放key-value数据到缓存中
+	 */
+	void put(Object key, Object value);
+
+	ValueWrapper putIfAbsent(Object key, Object value);
+
+	/**
+     * 从缓存中删除指定key的数据
+	 */
+	void evict(Object key);
+
+	/**
+     * 删除缓存中所有数据
+	 * Remove all mappings from the cache.
+	 */
+	void clear();
+
+	interface ValueWrapper {
+		Object get();
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheManager和Cache接口定义就是这么简单，下面再看看CacheManager和Cache的实现类。它们的实现类很多，我们这里选基于ConcurrentMap的实现：ConcurrentMapCacheManager和ConcurrentMapCache。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;/**
+ * ConcurrentMapCacheManager负责管理ConcurrentMapCache对象，支持懒加载获取，也支持预先实例化对象，
+ * 通过调用#setCacheNames方法可以预定义一些ConcurrentMapCache到ConcurrentMapCacheManager中，
+ * 但是一旦设置过后，dynamic就会设置为false，这时就不再支持动态创建Cache功能。
+ *
+ * 通常是否懒加载可以通过不同的构造器来控制，new ConcurrentMapCacheManager()创建懒加载的CacheManager，
+ * new ConcurrentMapCacheManager(String... cacheNames)创建预先定义Cache的CacheManager。
+ */
+public class ConcurrentMapCacheManager implements CacheManager {
+	
+	//使用ConcurrentMap来管理Cache集合对象
+	private final ConcurrentMap&amp;lt;String, Cache&amp;gt; cacheMap = new ConcurrentHashMap&amp;lt;String, Cache&amp;gt;(16);
+	//表示是否可以动态创建Cache缓存，如果指定过name那么就不能动态创建
+	private boolean dynamic = true;
+	
+	public ConcurrentMapCacheManager() {
+	}
+
+	public ConcurrentMapCacheManager(String... cacheNames) {
+		setCacheNames(Arrays.asList(cacheNames));
+	}
+	
+	/**
+     * 这里会初始化ConcurrentMapCache，并存放到ConcurrentMap中进行管理
+     * 一旦初始化过，这dynamic=false，在调用getCache(name)是就不会动态创建了
+	 */
+	public void setCacheNames(Collection&amp;lt;String&amp;gt; cacheNames) {
+		if (cacheNames != null) {
+			for (String name : cacheNames) {
+				this.cacheMap.put(name, createConcurrentMapCache(name));
+			}
+			this.dynamic = false;
+		}
+		else {
+			this.dynamic = true;
+		}
+	}
+
+	@Override
+	public Collection&amp;lt;String&amp;gt; getCacheNames() {
+		return Collections.unmodifiableSet(this.cacheMap.keySet());
+	}
+
+	/**
+	 * 根据缓存name来获取关联的ConcurrentMapCache实例
+	 * 如果ConcurrentMapCacheManager中没有获取到，则动态获取。（能否动态获取需要看dynamic是否为true）
+	 */
+	@Override
+	public Cache getCache(String name) {
+		Cache cache = this.cacheMap.get(name);
+		if (cache == null &amp;amp;&amp;amp; this.dynamic) {
+			synchronized (this.cacheMap) {
+				cache = this.cacheMap.get(name);
+				if (cache == null) {
+					cache = createConcurrentMapCache(name);
+					this.cacheMap.put(name, cache);
+				}
+			}
+		}
+		return cache;
+	}
+
+	/**
+	 * 创建Cache对象
+	 */
+	protected Cache createConcurrentMapCache(String name) {
+		return new ConcurrentMapCache(name, isAllowNullValues());
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheManager和Cache是不是很简单？是的，非常简单！ 可是在上面的applicationContext.xml并没有配置ConcurrentMapCacheManager和ConcurrentMapCache呀，在回顾一下applicationContext.xml中是怎么配置的吧，配置如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;&amp;lt;bean id=&amp;quot;cacheManager&amp;quot; class=&amp;quot;org.springframework.cache.support.SimpleCacheManager&amp;quot;&amp;gt;
+    &amp;lt;property name=&amp;quot;caches&amp;quot;&amp;gt;
+        &amp;lt;set&amp;gt;
+            &amp;lt;bean class=&amp;quot;org.springframework.cache.concurrent.ConcurrentMapCacheFactoryBean&amp;quot;&amp;gt;
+                &amp;lt;property name=&amp;quot;name&amp;quot; value=&amp;quot;hello&amp;quot;/&amp;gt;
+            &amp;lt;/bean&amp;gt;
+        &amp;lt;/set&amp;gt;
+    &amp;lt;/property&amp;gt;
+&amp;lt;/bean&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在applicationContext.xml中配置了SimpleCacheManager和ConcurrentMapCacheFactoryBean，SimpleCacheManager也是一个CacheManager的实现类，一个比ConcurrentMapCacheManager更简单的实现类，它需要外部指定Cache集合对象，而这个Cache对象正是使用ConcurrentMapCacheFactoryBean来注入到Spring的。虽然这两个类很简单，但是还是看一下部分源码吧（去掉了一些方法）。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public class ConcurrentMapCacheFactoryBean implements FactoryBean&amp;lt;ConcurrentMapCache&amp;gt;, BeanNameAware, InitializingBean {
+
+	//定义Cache的名称
+	private String name = &amp;quot;&amp;quot;;
+
+	//注入到Spring时缓存存储的数据
+	private ConcurrentMap&amp;lt;Object, Object&amp;gt; store;
+
+	//是否允许null值
+	private boolean allowNullValues = true;
+
+	//真实的Cache实现类
+
+	private ConcurrentMapCache cache;
+
+
+	/**
+	 * Specify the name of the cache.
+	 * &amp;lt;p&amp;gt;Default is &amp;quot;&amp;quot; (empty String).
+	 */
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public void setStore(ConcurrentMap&amp;lt;Object, Object&amp;gt; store) {
+		this.store = store;
+	}
+
+	public void setAllowNullValues(boolean allowNullValues) {
+		this.allowNullValues = allowNullValues;
+	}
+
+	/**
+	 * 以Spring注入的beanName作为Cache的名称
+	 */
+	@Override
+	public void setBeanName(String beanName) {
+		if (!StringUtils.hasLength(this.name)) {
+			setName(beanName);
+		}
+	}
+
+	/**
+	 * 对象注入到Spring的时候就初始化好了Cache对象（ConcurrentMapCache）
+	 */
+	@Override
+	public void afterPropertiesSet() {
+		this.cache = (this.store != null ? new ConcurrentMapCache(this.name, this.store, this.allowNullValues) :
+				new ConcurrentMapCache(this.name, this.allowNullValues));
+	}
+
+	@Override
+	public ConcurrentMapCache getObject() {
+		return this.cache;
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+其实，在applicationContext.xml中就负责配置了CacheManager，告诉Spring Cache使用什么要的CacheManager实现，接下来我们使用ConcurrentMapCacheManager来配置，可以达到同样的效果。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;&amp;lt;bean id=&amp;quot;cacheManager&amp;quot; class=&amp;quot;org.springframework.cache.concurrent.ConcurrentMapCacheManager&amp;quot;&amp;gt;
+    &amp;lt;!-- 可以不设置cacheNames哦，设置之后就不能动态创建Cache了。前面代码已经分析过，明白了吗！ --&amp;gt;
+    &amp;lt;property name=&amp;quot;cacheNames&amp;quot;&amp;gt;
+    	&amp;lt;set&amp;gt;
+    		&amp;lt;value&amp;gt;hello&amp;lt;/value&amp;gt;
+    		&amp;lt;value&amp;gt;world&amp;lt;/value&amp;gt;
+    	&amp;lt;/set&amp;gt;
+    &amp;lt;/property&amp;gt;
+&amp;lt;/bean&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+通过上面的分析，我们已经清楚地了解了CacheManager和Cache接口的作用，以及基于ConcurrentMap的实现。但是，分析了这么久，那Spring到底是怎么缓存数据的呢？ @CachePut、@Cacheable、@CacheEvict是怎么产生作用的呢？ 莫急，莫急，这个在后续章节中详细说明。至少我们现在知道，数据被存储到哪里去了！ 对，数据被存储在Cache是实现类里，就这么简单！&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+CacheManager和Cache还有基于Redis、Guava、EhCache、JCache的实现，这里就不分析了。哈哈，其实原理都一样！&lt;/p&gt;
+</description>
+        </item>
+        
+    </channel>
+</rss>

@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+
+<meta charset="utf-8">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+<meta property="og:url" content="http://www.xiaoqiyiye.com/">
+
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="SpringMVC源码分析(2) DispatchServlet请求分发 &middot; Xiaoqiyiye">
+
+<meta property="og:site_name" content="Xiaoqiyiye">
+
+<title>
+    
+    SpringMVC源码分析(2) DispatchServlet请求分发
+    
+</title>
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap-theme.min.css">
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="//yandex.st/highlightjs/8.0/styles/solarized_dark.min.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/styles.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/custom.css">
+
+
+<link rel="shortcut icon" href="http://www.xiaoqiyiye.com//assets/favicon.ico">
+
+
+<link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.xiaoqiyiye.com//index.xml">
+
+
+<div class="container">
+    <header class="nav">
+        <nav class="navbar navbar-default">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand" href="http://www.xiaoqiyiye.com/">Xiaoqiyiye</a>
+                </div>
+
+                <div class="collapse navbar-collapse" id="navbar-collapse">
+                    <ul class="nav navbar-nav">
+                        <li><a href="http://www.xiaoqiyiye.com//post">博客</a></li>
+                        <li><a href="http://www.xiaoqiyiye.com//tags">分类</a></li>
+                        
+                        <li><a href="http://www.xiaoqiyiye.com/about/">关于我</a></li>
+                        
+                    </ul>
+
+                    <ul class="nav navbar-nav navbar-right">
+                        
+                        
+                        
+                        <li>
+                            <a href="https://github.com/xiaoqiyiye" target="_blank">
+                                <i class="fa fa-github-square"></i>
+                                GitHub
+                            </a>
+                        </li>
+                        
+                        
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+
+<div class="row">
+    <div class="col-md-8">
+        <article class="post">
+
+            <header>
+                <div class="post-date">
+                    <span class="glyphicon glyphicon-calendar"></span>
+                    <time datetime="2015年10月22日">
+                        2015年10月22日
+                    </time>
+                </div>
+                <h1 class="post-title">
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/">SpringMVC源码分析(2) DispatchServlet请求分发</a>
+                </h1>
+            </header>
+
+            <div class="post-content">
+                
+
+<hr />
+
+<h3 id="dispatchservlet请求分发">DispatchServlet请求分发</h3>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+在上一篇中我们分析了DispatchServlet的启动过程，这篇中我们将要分析DispatchServlet的请求分发过程，也就是SpringMVC的工作原理。在分析代码之前，我们先了解一下SpringMVC的工作原理，如下图。</p>
+
+<p><img src="http://i.imgur.com/fxHZEhw.jpg" alt="" /></p>
+
+<ol>
+<li>客户端发出请求给web服务器，web服务器对http请求进行解析，如果匹配DispatcherServlet的请求映射路径（在web.xml中指定），web容器将请求转交给DispatcherServlet。</li>
+<li>DipatcherServlet接收到这个请求之后，根据HandlerMapping的配置，找到处理请求的处理器（Handler），处理器对象是包装在HandlerExecutorChain中的。</li>
+<li>DispatcherServlet根据处理器去匹配到HandlerAdapter。</li>
+<li>DispatcherServlet根据HandlerMapping找到对应的Handler,将处理权交给Handler（Handler将具体的处理进行封装），再由具体的HandlerAdapter对Handler进行具体的调用。</li>
+<li>Handler对数据处理完成以后将返回一个ModelAndView()对象给DispatcherServlet。</li>
+<li>Handler返回的ModelAndView()只是一个逻辑视图并不是一个真实的视图，DispatcherSevlet通过ViewResolver将逻辑视图转化为真正的视图View。</li>
+<li>Dispatcher通过model解析出ModelAndView()中的参数进行解析最终展现出完整的view并返回给客户端。</li>
+</ol>
+
+<hr />
+
+<h5 id="1-dispatchservlet请求入口">1. DispatchServlet请求入口</h5>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+前面说过了，DispatchServlet是HttpServlet的子类，所以请求入口肯定是doService(request, response)方法。在doService(request, response)中将一些特殊的对象设置到request中，包括了webApplicationContext对象，然后调用doDispatch(request, response)做请求的分发。这个方法很简单，大致的看一下就OK了，在DispatcherServlet中最重要的方法是doDispatch(request, response)这个方法。</p>
+
+<pre><code>protected void doService(HttpServletRequest request, HttpServletResponse response) throws Exception {
+
+    // 添加一些特殊的属性对象
+	request.setAttribute(WEB_APPLICATION_CONTEXT_ATTRIBUTE, getWebApplicationContext());
+	request.setAttribute(LOCALE_RESOLVER_ATTRIBUTE, this.localeResolver);
+	request.setAttribute(THEME_RESOLVER_ATTRIBUTE, this.themeResolver);
+	request.setAttribute(THEME_SOURCE_ATTRIBUTE, getThemeSource());
+
+	...省略一些代码
+
+	try {
+        //这个方法最重要，这是SpringMVC的核心，如何去处理请求分发？
+		doDispatch(request, response);
+	}
+	finally {
+		...省略一些代码
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+接下来，看看最重要的doDispatch(request, response)，这个方法是SpringMVC的中心调度器，负责处理交互各个对象。在这个方法中，我们要弄明白执行的主要步骤：</p>
+
+<ol>
+<li>获取HandlerExecutorChain对象</li>
+<li>获取HandlerAdapter对象</li>
+<li>调用拦截器前置处理方法HandlerInterceptor#preHandle(&hellip;)</li>
+<li>调用HandlerAdapter#handle(processedRequest, response, handler)，返回ModelAndView</li>
+<li>调用拦截器后置处理方法HandlerInterceptor#postHandle(&hellip;)</li>
+<li>处理ModelAndView</li>
+</ol>
+
+<pre><code>protected void doDispatch(HttpServletRequest request, HttpServletResponse response) throws Exception {
+	HttpServletRequest processedRequest = request;
+
+	HandlerExecutionChain mappedHandler = null;
+	boolean multipartRequestParsed = false;
+
+	WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
+
+	try {
+		ModelAndView mv = null;
+		Exception dispatchException = null;
+
+		try {
+		    // 判断是否是文件上传请求
+			processedRequest = checkMultipart(request);
+			multipartRequestParsed = processedRequest != request;
+
+            // 控制器执行链对象HandlerExecutionChain，
+            // 这个对象包含了处理器handler和拦截器集合interceptors，
+			// SpringMVC拦截器的处理都是在这里面定义的。
+            // HandlerExecutionChain对象由HandlerMapping接口来创建。
+			mappedHandler = getHandler(processedRequest);
+			if (mappedHandler == null || mappedHandler.getHandler() == null) {
+				noHandlerFound(processedRequest, response);
+				return;
+			}
+
+			// 通过hander去匹配一个处理handler操作的适配器HandlerAdapter对象
+			HandlerAdapter ha = getHandlerAdapter(mappedHandler.getHandler());
+
+            // 调用拦截器链前置处理方法，如果拦截器链上返回了false，则请求结束。
+			if (!mappedHandler.applyPreHandle(processedRequest, response)) {
+				return;
+			}
+
+			try {
+				// 由HandlerAdapter对象去真正调用处理器，
+				// Controller里的方法就是在这里调用的，并返回一个ModelAndView对象
+				mv = ha.handle(processedRequest, response, mappedHandler.getHandler());
+			}
+			finally {
+				if (asyncManager.isConcurrentHandlingStarted()) {
+					return;
+				}
+			}
+            
+            // 设置视图名称，这里需要用到ViewNameTranslator接口
+			applyDefaultViewName(request, mv);
+
+            // 调用拦截器的后置处理方法
+			mappedHandler.applyPostHandle(processedRequest, response, mv);
+		}
+		catch (Exception ex) {
+			dispatchException = ex;
+		}
+
+        // 处理分发返回的结果，包括了异常的处理、ModelAndView的处理
+        // 以及处理拦截器链最后的afterCompetion(request, response)方法。
+		processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);
+	}
+	catch (Exception ex) {
+        // 如果有异常或错误，调用HandlerInterceptor#AfterCompletion()
+		triggerAfterCompletion(processedRequest, response, mappedHandler, ex);
+	}
+	catch (Error err) {
+		triggerAfterCompletionWithError(processedRequest, response, mappedHandler, err);
+	}
+	finally {
+		if (asyncManager.isConcurrentHandlingStarted()) {
+			mappedHandler.applyAfterConcurrentHandlingStarted(processedRequest, response);
+			return;
+		}
+		if (multipartRequestParsed) {
+			cleanupMultipart(processedRequest);
+		}
+	}
+}
+</code></pre>
+
+<hr />
+
+<h5 id="2-获取handlerexecutorchain对象">2. 获取HandlerExecutorChain对象</h5>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+在DispatchServlet中，HandlerExecutorChain对象贯穿了整个doDispatch()方法，这是一个非常重要的对象，它包含了处理对象handler和拦截器集合interceptors。HandlerInterceptor拦截器的处理都是在HandlerExecutorChain中处理的。下面是HandlerExecutorChain的属性：</p>
+
+<pre><code>//处理器对象
+private final Object handler;
+//拦截器集合
+private HandlerInterceptor[] interceptors;
+private List&lt;HandlerInterceptor&gt; interceptorList;
+//执行到拦截器的索引位置
+private int interceptorIndex = -1;
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+在DispatchServlet中，调用getHandler(HttpServletRequest request)方法返回HandlerExecutionChain对象，下面看看这个方法。</p>
+
+<pre><code>protected HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+	// 遍历HandlerMapping对象
+	// handlerMappings在DispatchedServlet启动时就初始化好了，可以参考上一篇中分析
+	for (HandlerMapping hm : this.handlerMappings) {
+		//找到一个符合的就返回
+		HandlerExecutionChain handler = hm.getHandler(request);
+		if (handler != null) {
+			return handler;
+		}
+	}
+	return null;
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+从上面可以看出，HandlerExecutionChain的创建是由HandlerMapping接口来实现的。关于HandlerMapping接口是如何创建HandlerExecutionChain对象的具体细节，在下一篇中我们详细分析。</p>
+
+<hr />
+
+<h6 id="3-获取handleradapter对象和调用">3 获取HandlerAdapter对象和调用</h6>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+HandlerAdapter接口的主要功能是：使用被给的handler对象来处理请求，然后返回ModelAndView对象。这里的handler是创建HandlerExecutionChain时就应用创建好的。handler对象可以是Controller、HandlerMethod、Servlet等，也可以是其他自定义的对象类型。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+HandlerAdapter接口提供了两个方法，方法如下：</p>
+
+<pre><code>/**
+ * 返回该HandlerAdapter是否支持处理给定的handler对象
+ */
+boolean supports(Object handler);
+
+/**
+ * 使用handler对象处理请求，调用真实的请求方法并返回ModelAndView
+ */
+ModelAndView handle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception;
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+关于HandlerAdapter#handle(&hellip;)方法处理请求的详细内容，我们放在后续篇章中讲解。</p>
+
+<hr />
+
+<h6 id="4-handlerinterceptor-拦截器">4.HandlerInterceptor 拦截器</h6>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+HandlerInterceptor接口提供了3个方法，方法如下：</p>
+
+<pre><code>/**
+ * 该方法是拦截器的前置处理方法，是在真实请求处理之前被调用。
+ * 如果方法返回true，则调用拦截器链中的下一个拦截器，知道所有拦截器调用完成。
+ * 如果方法返回false，则表示该请求被拦截器，请求结束。
+ */
+boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
+    throws Exception;
+
+/**
+ * 该方法是拦截器的后置处理方法，是在真实请求之后被调用，但在试图渲染之前。
+ */
+void postHandle(
+		HttpServletRequest request, HttpServletResponse response, Object handler, ModelAndView modelAndView)
+		throws Exception;
+
+/**
+ * 该方法在请求处理完成之后调用，也就是说此时视图渲染已经完成。
+ * 该方法通常用在清除资源。
+ * 该方法可以执行的前置条件是： 拦截器链中所有的preHandle都返回true。
+ * 该方法在拦截器中是反序执行的，也就是说第一个拦截器最后执行这个方法。
+ */
+void afterCompletion(
+		HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
+		throws Exception;
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+关于拦截器的具体分析和SpringMVC中提供有哪些功能的拦截器，我们在后续在分篇章讲解，这里先做一个初步的认识。</p>
+
+<hr />
+
+<h6 id="5-返回异常处理-modelandview处理">5.返回异常处理、ModelAndView处理</h6>
+
+<p>&#160;&#160;&#160;&#160;&#160;
+在上面分析doDispatch()方法时，可以发现方法中对异常进行了捕获，并将捕获的异常传参到processDispatchResult()方法中去。下面我们就针对processDispatchResult()方法分析。</p>
+
+<pre><code>private void processDispatchResult(HttpServletRequest request, HttpServletResponse response,
+		HandlerExecutionChain mappedHandler, ModelAndView mv, Exception exception) throws Exception {
+
+	boolean errorView = false;
+    
+    // 如果发生了异常，则处理异常情况
+	if (exception != null) {
+	    // 如果是视图异常，则返回该ModelAndView视图
+		if (exception instanceof ModelAndViewDefiningException) {
+			mv = ((ModelAndViewDefiningException) exception).getModelAndView();
+		}
+		else {
+		    // 处理异常，并返回一个异常视图
+			Object handler = (mappedHandler != null ? mappedHandler.getHandler() : null);
+			mv = processHandlerException(request, response, handler, exception);
+			errorView = (mv != null);
+		}
+	}
+
+	// 处理返回的视图
+	if (mv != null &amp;&amp; !mv.wasCleared()) {
+	    // 渲染视图
+		render(mv, request, response);
+		if (errorView) {
+			WebUtils.clearErrorRequestAttributes(request);
+		}
+	}
+}
+</code></pre>
+
+<hr />
+
+<p>&#160;&#160;&#160;&#160;&#160;
+通过这篇文章的分析，我们了解了SpringMVC的请求分发过程。当然，由于篇幅过长，我们还有很多细节性的东西没有分析到。相关的细节我们在后续的篇章中分析。</p>
+
+            </div>
+
+            <aside>
+                
+                <ul class="list-inline post-tags">
+                    
+                    <li>
+                        <a href="http://www.xiaoqiyiye.com//tags/spring-mvc">
+                            <i class="fa fa-tags"></i>
+                            spring mvc
+                        </a>
+                    </li>
+                    
+                </ul>
+
+                
+                
+                <h3>相关博客</h3>
+                <ul class="post-rels">
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping">SpringMVC源码分析(3) HandlerMapping分析</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2015/10/21/spring/">SpringMVC源码分析(1) DispatchServlet初始化</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                </ul>
+            </aside>
+            
+            
+            <footer>
+
+                <nav>
+                    <ul class="pager">
+
+                        
+                        <li class="previous"><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping"><span aria-hidden="true">&larr;</span> Older</a></li>
+                        
+
+                        <li><a href="http://www.xiaoqiyiye.com//post">All Posts</a></li>
+
+                        
+                        <li class="next"><a href="http://www.xiaoqiyiye.com/2015/10/21/spring/">Newer <span aria-hidden="true">&rarr;</span></a></li>
+                        
+
+                    </ul>
+                </nav>
+
+                
+                
+                
+            </footer>
+
+        </article>
+    </div>
+    <div class="col-md-4">
+        
+<aside>
+    <div class="row">
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">最近博客</h2>
+                </div>
+                <div class="list-group">
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/" class="list-group-item">SpringCache (4) CacheInterceptor、</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/" class="list-group-item">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/" class="list-group-item">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/" class="list-group-item">SpringCache源码分析(1)  CacheManager和Cache</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping" class="list-group-item">SpringMVC源码分析(3) HandlerMapping分析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/" class="list-group-item">SpringMVC源码分析(2) DispatchServlet请求分发</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/21/spring/" class="list-group-item">SpringMVC源码分析(1) DispatchServlet初始化</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/18/spring/" class="list-group-item">SpringWeb源码分析(1) Web容器启动</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/about/" class="list-group-item">关于我</a>
+                    
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">分类</h2>
+                </div>
+                <div class="list-group">
+                    
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring" class="list-group-item">
+                        <span class="badge">1</span>
+                        spring
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-cache" class="list-group-item">
+                        <span class="badge">4</span>
+                        spring-cache
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-mvc" class="list-group-item">
+                        <span class="badge">3</span>
+                        spring-mvc
+                    </a>
+                    
+                </div>
+            </div>
+        </div>
+
+    </div>
+</aside>
+
+    </div>
+</div>
+
+</div>
+<hr>
+
+<footer class="container copy">
+    <p>&copy; 2016  linya </p>
+	<p>Powered by <a href="http://github.com/xiaoqiyiye" target="_blank">Xiaoqiyiye</a></p>
+	<p>Email: linya_xiaoqiyiye@126.com</p>
+</footer>
+
+<script src="//code.jquery.com/jquery-2.1.3.min.js"></script>
+<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>
+<script src="//yandex.st/highlightjs/8.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+ga('create', '', 'auto');
+ga('send', 'pageview');
+
+</script>
+
+<script>
+document.write('<script src="//sharebutton.net/plugin/sharebutton.php?type=horizontal&u=' + encodeURIComponent(document.location.href) + '"></scr' + 'ipt>');
+</script>
+

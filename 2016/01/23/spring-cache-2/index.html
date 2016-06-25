@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+
+<meta charset="utf-8">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+<meta property="og:url" content="http://www.xiaoqiyiye.com/">
+
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解 &middot; Xiaoqiyiye">
+
+<meta property="og:site_name" content="Xiaoqiyiye">
+
+<title>
+    
+    SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解
+    
+</title>
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap-theme.min.css">
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="//yandex.st/highlightjs/8.0/styles/solarized_dark.min.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/styles.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/custom.css">
+
+
+<link rel="shortcut icon" href="http://www.xiaoqiyiye.com//assets/favicon.ico">
+
+
+<link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.xiaoqiyiye.com//index.xml">
+
+
+<div class="container">
+    <header class="nav">
+        <nav class="navbar navbar-default">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand" href="http://www.xiaoqiyiye.com/">Xiaoqiyiye</a>
+                </div>
+
+                <div class="collapse navbar-collapse" id="navbar-collapse">
+                    <ul class="nav navbar-nav">
+                        <li><a href="http://www.xiaoqiyiye.com//post">博客</a></li>
+                        <li><a href="http://www.xiaoqiyiye.com//tags">分类</a></li>
+                        
+                        <li><a href="http://www.xiaoqiyiye.com/about/">关于我</a></li>
+                        
+                    </ul>
+
+                    <ul class="nav navbar-nav navbar-right">
+                        
+                        
+                        
+                        <li>
+                            <a href="https://github.com/xiaoqiyiye" target="_blank">
+                                <i class="fa fa-github-square"></i>
+                                GitHub
+                            </a>
+                        </li>
+                        
+                        
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+
+<div class="row">
+    <div class="col-md-8">
+        <article class="post">
+
+            <header>
+                <div class="post-date">
+                    <span class="glyphicon glyphicon-calendar"></span>
+                    <time datetime="2016年1月23日">
+                        2016年1月23日
+                    </time>
+                </div>
+                <h1 class="post-title">
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a>
+                </h1>
+            </header>
+
+            <div class="post-content">
+                
+
+<p>&#160;&#160;&#160;&#160;
+在上一篇中我们讲解了CacheManager和Cache源码，学会了怎样使用注解进行缓存，但是对于@CachePut、@Cacheable、@CacheEvict这些注解没有提及到，这一篇中我们将对Spring Cache中提供的注解操作做一个详细的说明。
+<br></p>
+
+<hr />
+
+<h3 id="cacheput">@CachePut</h3>
+
+<p>&#160;&#160;&#160;&#160;
+@CachePut表示需要存放缓存数据，可以在类或方法上进行注解，如果注解在类上，表示这个类的所有方法都使用了@CachePut。这个注解可以设置哪些信息呢？我们直接看源代码，因为源代码能从根本说明一切。</p>
+
+<pre><code>/**
+ * @CachePut可以注解类和方法，注解类时，表示整个类中的方法都注解了
+ */	
+@Target({ ElementType.METHOD, ElementType.TYPE })
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface CachePut {
+
+	/**
+	 * 定义存放的Cache名称，和下面的cacheNames一样
+	 */
+	@AliasFor(&quot;cacheNames&quot;)
+	String[] value() default {};
+
+	@AliasFor(&quot;value&quot;)
+	String[] cacheNames() default {};
+
+	/**
+     * 为缓存值定义的key，默认为&quot;&quot;，表示所有的参数都加入到key的生成中（使用默认的keyGenerator）
+	 */
+	String key() default &quot;&quot;;
+
+	/**
+     * 可以使用keyGenerator来自定义key的生成，但是keyGenerator和key是排它性的，也就是说key和keyGenerator只能定义其中一个
+	 */
+	String keyGenerator() default &quot;&quot;;
+
+	/**
+     * 指定设置特定的cacheManager，与cacheResolver也是排它性的。
+	 * {@link org.springframework.cache.CacheManager}
+	 */
+	String cacheManager() default &quot;&quot;;
+
+	/**
+     * 自定义cacheResolver
+	 * {@link org.springframework.cache.interceptor.CacheResolver}
+	 */
+	String cacheResolver() default &quot;&quot;;
+
+	/**
+     * 定义缓存被存放的条件，只有满足条件的方法返回值才能被存放。默认为&quot;&quot;，也意味着方法的结果都可以被缓存。
+	 */
+	String condition() default &quot;&quot;;
+
+	/**
+     * unless是在方法调用后判断是否需要进行缓存更新，如果满足unless条件就不缓存。unless具有否决权！
+	 */
+	String unless() default &quot;&quot;;
+
+}
+```	
+
+
+----------
+
+
+### @Cacheable
+
+&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+@Cacheable表示从缓存中取数据，如果缓存中没有数据则执行方法，并将方法返回的结果存入到缓存中，以便下次直接从缓存中获取。@Cacheable可以在类或方法上进行注解，如果注解在类上，表示这个类的所有方法都使用了@Cacheable。由于@Cacheable和@CachePut的定义一样，就不多说明了。
+
+</code></pre>
+
+<p>@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Cacheable {</p>
+
+<pre><code>@AliasFor(&quot;cacheNames&quot;)
+String[] value() default {};
+
+@AliasFor(&quot;value&quot;)
+String[] cacheNames() default {};
+
+String key() default &quot;&quot;;
+
+String keyGenerator() default &quot;&quot;;
+
+String cacheManager() default &quot;&quot;;
+
+String cacheResolver() default &quot;&quot;;
+
+String condition() default &quot;&quot;;
+
+String unless() default &quot;&quot;;
+</code></pre>
+
+<p>}</p>
+
+<pre><code>
+
+----------
+
+### @CacheEvict
+
+&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+@CacheEvit表示从缓存中删除数据。和@CachePut、@Cacheable的定义基本一样，只有2个参数定义不同，allEntries和beforeInvocation。allEntries表示是否删除指定Cache名称中所有的缓存数据。beforeInvocation表示是否在方法执行前删除缓存数据，因为方法内部可能会出现异常，如果beforeInvocation=false,方法内出现异常，缓存中的数据是不会被删除的。
+
+</code></pre>
+
+<p>@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface CacheEvict {</p>
+
+<pre><code>@AliasFor(&quot;cacheNames&quot;)
+String[] value() default {};
+
+@AliasFor(&quot;value&quot;)
+String[] cacheNames() default {};
+
+String key() default &quot;&quot;;
+
+String keyGenerator() default &quot;&quot;;
+
+String cacheManager() default &quot;&quot;;
+
+String cacheResolver() default &quot;&quot;;
+
+String condition() default &quot;&quot;;
+
+/**
+ * 表示是否删除缓存中所有数据，默认为false,只会删除与key关联的那个缓存数据
+ */
+boolean allEntries() default false;
+
+/**
+ * 表示是否在方法调用之前删除数据，默认为false，表示缓存删除操作是在方法调用之后的
+ */
+boolean beforeInvocation() default false;
+</code></pre>
+
+<p>}</p>
+
+<pre><code>
+
+----------
+
+### @Caching
+
+&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+@Caching是一个组合式的注解，可以组合配置@CachePut、@Cacheable、@CacheEvict集合，也可以在类或方法上进行注解。
+
+</code></pre>
+
+<p>@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Caching {</p>
+
+<pre><code>Cacheable[] cacheable() default {};
+
+CachePut[] put() default {};
+
+CacheEvict[] evict() default {};
+</code></pre>
+
+<p>}
+```</p>
+
+<hr />
+
+<p>&#160;&#160;&#160;&#160;
+了解了@CachePut、@Cacheable、@CacheEvict这些注解的详细使用，那么，接下来我有一个疑惑了，这些注解到底是怎么作用到配置的方法上的呢？ 怎么能够说明一个执行方法就使用了这些注解呢？对，这些注解肯定需要被解析成操作对象！那么，@CachePut、@Cacheable、@CacheEvict会被怎么解析呢？ 这些问题我们在下一篇中做详细的分析。</p>
+
+            </div>
+
+            <aside>
+                
+                <ul class="list-inline post-tags">
+                    
+                    <li>
+                        <a href="http://www.xiaoqiyiye.com//tags/spring-cache">
+                            <i class="fa fa-tags"></i>
+                            spring cache
+                        </a>
+                    </li>
+                    
+                </ul>
+
+                
+                
+                <h3>相关博客</h3>
+                <ul class="post-rels">
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/">SpringCache (4) CacheInterceptor、</a></li>
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/">SpringCache源码分析(1)  CacheManager和Cache</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                </ul>
+            </aside>
+            
+            
+            <footer>
+
+                <nav>
+                    <ul class="pager">
+
+                        
+                        <li class="previous"><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/"><span aria-hidden="true">&larr;</span> Older</a></li>
+                        
+
+                        <li><a href="http://www.xiaoqiyiye.com//post">All Posts</a></li>
+
+                        
+                        <li class="next"><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/">Newer <span aria-hidden="true">&rarr;</span></a></li>
+                        
+
+                    </ul>
+                </nav>
+
+                
+                
+                
+            </footer>
+
+        </article>
+    </div>
+    <div class="col-md-4">
+        
+<aside>
+    <div class="row">
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">最近博客</h2>
+                </div>
+                <div class="list-group">
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/" class="list-group-item">SpringCache (4) CacheInterceptor、</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/" class="list-group-item">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/" class="list-group-item">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/" class="list-group-item">SpringCache源码分析(1)  CacheManager和Cache</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping" class="list-group-item">SpringMVC源码分析(3) HandlerMapping分析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/" class="list-group-item">SpringMVC源码分析(2) DispatchServlet请求分发</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/21/spring/" class="list-group-item">SpringMVC源码分析(1) DispatchServlet初始化</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/18/spring/" class="list-group-item">SpringWeb源码分析(1) Web容器启动</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/about/" class="list-group-item">关于我</a>
+                    
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">分类</h2>
+                </div>
+                <div class="list-group">
+                    
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring" class="list-group-item">
+                        <span class="badge">1</span>
+                        spring
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-cache" class="list-group-item">
+                        <span class="badge">4</span>
+                        spring-cache
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-mvc" class="list-group-item">
+                        <span class="badge">3</span>
+                        spring-mvc
+                    </a>
+                    
+                </div>
+            </div>
+        </div>
+
+    </div>
+</aside>
+
+    </div>
+</div>
+
+</div>
+<hr>
+
+<footer class="container copy">
+    <p>&copy; 2016  linya </p>
+	<p>Powered by <a href="http://github.com/xiaoqiyiye" target="_blank">Xiaoqiyiye</a></p>
+	<p>Email: linya_xiaoqiyiye@126.com</p>
+</footer>
+
+<script src="//code.jquery.com/jquery-2.1.3.min.js"></script>
+<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>
+<script src="//yandex.st/highlightjs/8.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+ga('create', '', 'auto');
+ga('send', 'pageview');
+
+</script>
+
+<script>
+document.write('<script src="//sharebutton.net/plugin/sharebutton.php?type=horizontal&u=' + encodeURIComponent(document.location.href) + '"></scr' + 'ipt>');
+</script>
+

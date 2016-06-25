@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+    <channel>
+        <title>Spring on Xiaoqiyiye</title>
+        <link>http://www.xiaoqiyiye.com/tags/spring/</link>
+        <language>zh-CN</language>
+        <author>xiaoqiyiye</author>
+        <rights>Copyright (c) 2015-2016, xiaoqiyiye all rights reserved.</rights>
+        <updated>Sun, 18 Oct 2015 23:43:51 &#43;0800</updated>
+        
+        <item>
+            <title>SpringWeb源码分析(1) Web容器启动</title>
+            <link>http://www.xiaoqiyiye.com/2015/10/18/spring/</link>
+            <pubDate>Sun, 18 Oct 2015 23:43:51 &#43;0800</pubDate>
+            <author>CoderZh</author>
+            <guid>http://www.xiaoqiyiye.com/2015/10/18/spring/</guid>
+            <description>
+
+&lt;hr /&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在分析SpringMVC之前先了解一下Spring Web容器的加载过程，看看在Web容器中Spring是如何加载的。在web.xml配置文件中我们常常会配置如下代码。代码中配置了contextConfigLocation和ContextLoaderListenter，contextConfigLocation用来设置Spring的配置文件，ContextLoaderListenter用来启动Spring Web容器。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;&amp;lt;context-param&amp;gt;
+  &amp;lt;param-name&amp;gt;contextConfigLocation&amp;lt;/param-name&amp;gt;
+  &amp;lt;param-value&amp;gt;classpath:applicationContext.xml&amp;lt;/param-value&amp;gt;
+&amp;lt;/context-param&amp;gt;
+
+&amp;lt;listener&amp;gt;
+  &amp;lt;listener-class&amp;gt;
+  	org.springframework.web.context.ContextLoaderListener
+  &amp;lt;/listener-class&amp;gt;
+&amp;lt;/listener&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;spring-web容器的初始化&#34;&gt;Spring Web容器的初始化&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从上面的配置，可想而知ContextLoaderListener是分析的入口，ContextLoaderListener实现了ServletContextListener接口，ServletContextListener是Java Servlet的API，其负责监听Servlet的生命周期。在ServletContextListener中存在一个contextInitialized(ServletContextEvent sce)方法，当Web应用开启时后调用此方法。&lt;/p&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+那我们看看ContextLoaderListener#contextInitialized(ServletContextEvent sce)方法，其实这个方法就调用了父类的ContextLoader#initWebApplicationContext(ServletContext servletContext)。我们接下来分析initWebApplicationContext(ServletContext servletContext)方法的源码，方法中最重要的就是如何生成context实例，也就是creatWebApplicationContext(servletContext)这个方法。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;public WebApplicationContext initWebApplicationContext(ServletContext servletContext) {
+
+    // 判断是否已经加载过，如果已经加载，则抛出异常。
+	if (servletContext.getAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE) != null) {
+		throw new IllegalStateException();
+	}
+
+	Log logger = LogFactory.getLog(ContextLoader.class);
+	servletContext.log(&amp;quot;Initializing Spring root WebApplicationContext&amp;quot;);
+	
+	long startTime = System.currentTimeMillis();
+
+	try {
+
+		if (this.context == null) {
+            // 创建Spring Web容器 WebApplicationContext
+			this.context = createWebApplicationContext(servletContext);
+		}
+		if (this.context instanceof ConfigurableWebApplicationContext) {
+			ConfigurableWebApplicationContext cwac = (ConfigurableWebApplicationContext) this.context;
+			if (!cwac.isActive()) {
+				// 如果没有父类容器，则设置父类容器
+				if (cwac.getParent() == null) {
+					ApplicationContext parent = loadParentContext(servletContext);
+					cwac.setParent(parent);
+				}
+                // 刷新容器
+				configureAndRefreshWebApplicationContext(cwac, servletContext);
+			}
+		}
+		
+        // 设置到Servlet的上下文属性中去，以便后续业务中可以获取
+		servletContext.setAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE, this.context);
+
+        // 关联当前Spring Web容器和类加载器Map，便于外部获取当前类加载器关联的Spring Web容器
+		ClassLoader ccl = Thread.currentThread().getContextClassLoader();
+		if (ccl == ContextLoader.class.getClassLoader()) {
+			currentContext = this.context;
+		}
+		else if (ccl != null) {
+			currentContextPerThread.put(ccl, this.context);
+		}
+
+        // 返回当前的Spring Web容器对象
+		return this.context;
+	}
+	catch (RuntimeException ex) {
+		logger.error(&amp;quot;Context initialization failed&amp;quot;, ex);
+		servletContext.setAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE, ex);
+		throw ex;
+	}
+	catch (Error err) {
+		logger.error(&amp;quot;Context initialization failed&amp;quot;, err);
+		servletContext.setAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE, err);
+		throw err;
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;spring-web容器的实例化&#34;&gt;Spring Web容器的实例化&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+在上面有看到创建context是在createWebApplicationContext(servletContext)中，这个方法很简单，获取到容器的类型后通过反射实例化。 这个方法源码如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;protected WebApplicationContext createWebApplicationContext(ServletContext sc) {
+
+    // 获取容器的类型，默认为XmlWebApplicationContext
+	Class&amp;lt;?&amp;gt; contextClass = determineContextClass(sc);
+	
+	// 如果类型错误，则会抛出异常
+	if (!ConfigurableWebApplicationContext.class.isAssignableFrom(contextClass)) {
+		throw new ApplicationContextException();
+	}
+	
+	// 反射实例化一个Spring Web容器对象
+	return (ConfigurableWebApplicationContext)BeanUtils.instantiateClass(contextClass);
+}
+
+protected Class&amp;lt;?&amp;gt; determineContextClass(ServletContext servletContext) {
+
+    // 首先，从web.xml中获取classContext属性，如果配置了这个属性，则根据配置来设置类型。
+	String contextClassName = servletContext.getInitParameter(CONTEXT_CLASS_PARAM);
+	if (contextClassName != null) {
+		try {
+			return ClassUtils.forName(contextClassName, ClassUtils.getDefaultClassLoader());
+		}
+		catch (ClassNotFoundException ex) {
+			throw new ApplicationContextException(
+					&amp;quot;Failed to load custom context class [&amp;quot; + contextClassName + &amp;quot;]&amp;quot;, ex);
+		}
+	}
+	// 否则，从Spring包提供的ContextLoader.properties中去找，Spring提供的默认类型是XmlWebApplicationContext。
+	else {
+		contextClassName = defaultStrategies.getProperty(WebApplicationContext.class.getName());
+		try {
+			return ClassUtils.forName(contextClassName, ContextLoader.class.getClassLoader());
+		}
+		catch (ClassNotFoundException ex) {
+			throw new ApplicationContextException(
+					&amp;quot;Failed to load default context class [&amp;quot; + contextClassName + &amp;quot;]&amp;quot;, ex);
+		}
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+Spring提供的默认容器类型为XmlWebApplicationContext，但是这个值是可以设置的，在web.xml中可以配置classContext来实现，但是这个值必须是ConfigurableWebApplicationContext的子类，否则会抛异常。配置方式如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;  &amp;lt;context-param&amp;gt;
+  	&amp;lt;param-name&amp;gt;classContext&amp;lt;/param-name&amp;gt;
+  	&amp;lt;param-value&amp;gt;org.springframework.web.context.XmlWebAlpplicationContext&amp;lt;/param-value&amp;gt;
+  &amp;lt;/context-param&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+从上面的分析看，只是实例化了容器对象，但是Spring容器还没有启动，在web.xml中配置的contextConfigLocation也没有被加载。接下来看看，Spring容器的加载。&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;spring-web容器的加载&#34;&gt;Spring Web容器的加载&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+我们还是回到initWebApplicationContext(ServletContext servletContext)方法中， 看看configureAndRefreshWebApplicationContext(cwac, servletContext)这句代码。不要怀疑能否可以进入if语句，createWebApplicationContext()方法返回的类型肯定是ConfigurableWebApplicationContext。看看容器是如何加载的。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;protected void configureAndRefreshWebApplicationContext(ConfigurableWebApplicationContext wac, ServletContext sc) {
+
+    // 生成容器Id
+	if (ObjectUtils.identityToString(wac).equals(wac.getId())) {
+		String idParam = sc.getInitParameter(CONTEXT_ID_PARAM);
+		if (idParam != null) {
+			wac.setId(idParam);
+		}
+		else {
+			wac.setId(ConfigurableWebApplicationContext.APPLICATION_CONTEXT_ID_PREFIX +
+					ObjectUtils.getDisplayString(sc.getContextPath()));
+		}
+	}
+
+    // 设置ServletContext上下文对象
+	wac.setServletContext(sc);
+	
+    // 获取Spring配置文件，在web.xml中配置的contextConfigLocation参数。对于XmlWebApplicationContext默认值为/WEB-INF/applicationContext.xml
+	String configLocationParam = sc.getInitParameter(CONFIG_LOCATION_PARAM);
+	if (configLocationParam != null) {
+		wac.setConfigLocation(configLocationParam);
+	}
+
+	// 提前初始化环境属性，确保容器刷新时post-processing或initialization等相关的接口使用
+	ConfigurableEnvironment env = wac.getEnvironment();
+	if (env instanceof ConfigurableWebEnvironment) {
+		((ConfigurableWebEnvironment) env).initPropertySources(sc, null);
+	}
+
+    // 在启动容器前，还可以自定义容器
+	customizeContext(sc, wac);
+	
+    // Spring WEB容器启动
+	wac.refresh();
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;hr /&gt;
+
+&lt;h3 id=&#34;自定义容器&#34;&gt;自定义容器&lt;/h3&gt;
+
+&lt;p&gt;&amp;#160;&amp;#160;&amp;#160;&amp;#160;
+Spring Web容器启动前可以进行一些自定义，通过ApplicationContextInitializer接口来完成。在web.xml中可以配置globalInitializerClasses和contextInitializerClasses这两个参数来实现自定义容器，当然配置的类需要是ApplicationContextInitializer接口的实现类。另外，实现Ordered接口或@Order注解，可以进行排序。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;&amp;lt;context-param&amp;gt;
+    &amp;lt;param-name&amp;gt;globalInitializerClasses&amp;lt;/param-name&amp;gt;
+    &amp;lt;param-value&amp;gt;XxxApplicationContextInitializer&amp;lt;/param-value&amp;gt;
+&amp;lt;/context-param&amp;gt;
+&amp;lt;context-param&amp;gt;
+    &amp;lt;param-name&amp;gt;contextInitializerClasses&amp;lt;/param-name&amp;gt;
+    &amp;lt;param-value&amp;gt;XxxApplicationContextInitializer&amp;lt;/param-value&amp;gt;
+&amp;lt;/context-param&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;简单的看一下customizeContext(sc, wac)这个方法，源码如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;protected void customizeContext(ServletContext sc, ConfigurableWebApplicationContext wac) {
+
+    // 找到配置的globalInitializerClasses和contextInitializerClasses
+	List&amp;lt;Class&amp;lt;ApplicationContextInitializer&amp;lt;ConfigurableApplicationContext&amp;gt;&amp;gt;&amp;gt; initializerClasses = determineContextInitializerClasses(sc);
+	if (initializerClasses.isEmpty()) {
+		return;
+	}
+
+	ArrayList&amp;lt;ApplicationContextInitializer&amp;lt;ConfigurableApplicationContext&amp;gt;&amp;gt; initializerInstances =
+			new ArrayList&amp;lt;ApplicationContextInitializer&amp;lt;ConfigurableApplicationContext&amp;gt;&amp;gt;();
+
+    // 反射实例化
+	for (Class&amp;lt;ApplicationContextInitializer&amp;lt;ConfigurableApplicationContext&amp;gt;&amp;gt; initializerClass : initializerClasses) {
+		initializerInstances.add(BeanUtils.instantiateClass(initializerClass));
+	}
+
+    // 按照Ordered接口或@Order注解排序
+	AnnotationAwareOrderComparator.sort(initializerInstances);
+
+    // 遍历调用initialize方法
+	for (ApplicationContextInitializer&amp;lt;ConfigurableApplicationContext&amp;gt; initializer : initializerInstances) {
+		initializer.initialize(wac);
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+</description>
+        </item>
+        
+    </channel>
+</rss>

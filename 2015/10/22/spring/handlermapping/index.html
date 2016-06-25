@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+
+<meta charset="utf-8">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+<meta property="og:url" content="http://www.xiaoqiyiye.com/">
+
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="SpringMVC源码分析(3) HandlerMapping分析 &middot; Xiaoqiyiye">
+
+<meta property="og:site_name" content="Xiaoqiyiye">
+
+<title>
+    
+    SpringMVC源码分析(3) HandlerMapping分析
+    
+</title>
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap-theme.min.css">
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="//yandex.st/highlightjs/8.0/styles/solarized_dark.min.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/styles.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/custom.css">
+
+
+<link rel="shortcut icon" href="http://www.xiaoqiyiye.com//assets/favicon.ico">
+
+
+<link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.xiaoqiyiye.com//index.xml">
+
+
+<div class="container">
+    <header class="nav">
+        <nav class="navbar navbar-default">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand" href="http://www.xiaoqiyiye.com/">Xiaoqiyiye</a>
+                </div>
+
+                <div class="collapse navbar-collapse" id="navbar-collapse">
+                    <ul class="nav navbar-nav">
+                        <li><a href="http://www.xiaoqiyiye.com//post">博客</a></li>
+                        <li><a href="http://www.xiaoqiyiye.com//tags">分类</a></li>
+                        
+                        <li><a href="http://www.xiaoqiyiye.com/about/">关于我</a></li>
+                        
+                    </ul>
+
+                    <ul class="nav navbar-nav navbar-right">
+                        
+                        
+                        
+                        <li>
+                            <a href="https://github.com/xiaoqiyiye" target="_blank">
+                                <i class="fa fa-github-square"></i>
+                                GitHub
+                            </a>
+                        </li>
+                        
+                        
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+
+<div class="row">
+    <div class="col-md-8">
+        <article class="post">
+
+            <header>
+                <div class="post-date">
+                    <span class="glyphicon glyphicon-calendar"></span>
+                    <time datetime="2015年10月24日">
+                        2015年10月24日
+                    </time>
+                </div>
+                <h1 class="post-title">
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping">SpringMVC源码分析(3) HandlerMapping分析</a>
+                </h1>
+            </header>
+
+            <div class="post-content">
+                
+
+<hr />
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+在前面的篇章中我们已经提及过HandlerMapping接口，HandlerMapping接口提供的方法很简单，就是创建HandlerExecutorChain对象。而在HandlerExecutorChain对象中包含了handler对象和拦截器链对象。所以，我们在分析HandlerMapping过程中，也主要围绕这两点分析。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+由于HandlerMapping提供了最基本的抽象实现AbstractHandlerMapping，所以我们从AbstractHandlerMapping开始分析。</p>
+
+<hr />
+
+<h3 id="1-abstracthandlermapping-分析">1.AbstractHandlerMapping 分析</h3>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+关于AbstractHandlerMapping的分析，分为以下三个步骤：
+1. 属性域说明
+2. 获取拦截器
+3. 创建HandlerExecutorChain对象</p>
+
+<h4 id="1-1-属性域说明">1.1 属性域说明</h4>
+
+<pre><code>// 配置默认的handler对象，在没有获取到handler的情况下使用
+private Object defaultHandler;
+
+// request请求路径解析辅助类
+private UrlPathHelper urlPathHelper = new UrlPathHelper();
+
+// 请求路径匹配辅助类，用于匹配哪些路径可以被MappedInterceptor来拦截处理
+private PathMatcher pathMatcher = new AntPathMatcher();
+
+// 子类或配置文件可以配置拦截器，这里的Object类型为：
+// HandlerInterceptor, WebRequestInterceptor 和 MappedInterceptor
+private final List&lt;Object&gt; interceptors = new ArrayList&lt;Object&gt;();
+
+// 请求真正被适配到的拦截器(包含了HandlerInterceptor, WebRequestInterceptor)
+private final List&lt;HandlerInterceptor&gt; adaptedInterceptors = new ArrayList&lt;HandlerInterceptor&gt;();
+
+// 需要进行路径匹配的MappingInterceptor
+private final List&lt;MappedInterceptor&gt; mappedInterceptors = new ArrayList&lt;MappedInterceptor&gt;();
+</code></pre>
+
+<h4 id="1-2-获取拦截器">1.2 获取拦截器</h4>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+由于AbstractHandlerMapping继承了WebApplicationObjectSupport类，所以在Spring容器启动完成后会调用initApplicationContext()方法。</p>
+
+<pre><code>protected void initApplicationContext() throws BeansException {
+    
+    // 钩子方法，由子类重写，子类可以添加新的拦截器，
+    // interceptors是由配置文件设置的，在Bean注入时调用setInterceptors(Object[] interceptors)注入。
+	extendInterceptors(this.interceptors);
+	
+	// 检测容器中注入的MappedInterceptor，并添加到mappedInterceptors中。
+	detectMappedInterceptors(this.mappedInterceptors);
+	
+	//初始化拦截器，也就对interceptors中的拦截器分类存放，
+	// MappedInterceptor拦截器存放到mappedInterceptors中去，
+	// HandlerInterceptor、WebRequestInterceptor拦截器存放到adaptedInterceptors中去。
+	initInterceptors();
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+下面是initInterceptors()的具体实现。</p>
+
+<pre><code>protected void initInterceptors() {
+	if (!this.interceptors.isEmpty()) {
+		for (int i = 0; i &lt; this.interceptors.size(); i++) {
+			Object interceptor = this.interceptors.get(i);
+			if (interceptor == null) {
+				throw new IllegalArgumentException();
+			}
+			// 存在到mappedInterceptors
+			if (interceptor instanceof MappedInterceptor) {
+				mappedInterceptors.add((MappedInterceptor) interceptor);
+			}
+			// 存放到adaptedInterceptors
+			else {
+				adaptedInterceptors.add(adaptInterceptor(interceptor));
+			}
+		}
+	}
+}
+protected HandlerInterceptor adaptInterceptor(Object interceptor) {
+	if (interceptor instanceof HandlerInterceptor) {
+		return (HandlerInterceptor) interceptor;
+	}
+	// WebRequestInterceptor接口会被适配成HandlerInterceptor接口
+	else if (interceptor instanceof WebRequestInterceptor) {
+		return new WebRequestHandlerInterceptorAdapter((WebRequestInterceptor) interceptor);
+	}
+	else {
+		throw new IllegalArgumentException(&quot;Interceptor type not supported: &quot; + interceptor.getClass().getName());
+	}
+}
+</code></pre>
+
+<h4 id="1-3-创建handlerexecutorchain对象">1.3 创建HandlerExecutorChain对象</h4>
+
+<p>很清楚，创建HandlerExecutorChain对象是接口方法 HandlerExecutionChain getHandler(HttpServletRequest request)，下面直接分析代码。</p>
+
+<pre><code>public final HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+    // 这是一个抽象方法，具体的handler对象，子类去提供，因为抽象类并不知道是请求需要哪种handler
+	Object handler = getHandlerInternal(request);
+	// 如果没有获取到，则获取默认配置的handler
+	if (handler == null) {
+		handler = getDefaultHandler();
+	}
+	// 如果没有默认配置，则返回null
+	if (handler == null) {
+		return null;
+	}
+	// 如果handler是String类型，则当作beanName从容器器获取
+	if (handler instanceof String) {
+		String handlerName = (String) handler;
+		handler = getApplicationContext().getBean(handlerName);
+	}
+	// 返回HandlerExecutionChain对象
+	return getHandlerExecutionChain(handler, request);
+}
+
+protected HandlerExecutionChain getHandlerExecutionChain(Object handler, HttpServletRequest request) {
+    // 如果handler本身是HandlerExecutionChain类型则不用创建，
+    // 否则创建一个HandlerExecutionChain对象并设置handler
+	HandlerExecutionChain chain =
+		(handler instanceof HandlerExecutionChain) ?
+			(HandlerExecutionChain) handler : new HandlerExecutionChain(handler);
+    
+    // 设置拦截器
+	chain.addInterceptors(getAdaptedInterceptors());
+
+    // 根据请求路径，匹配哪些MappedInterceptor需要被拦截
+	String lookupPath = urlPathHelper.getLookupPathForRequest(request);
+	for (MappedInterceptor mappedInterceptor : mappedInterceptors) {
+		if (mappedInterceptor.matches(lookupPath, pathMatcher)) {
+			chain.addInterceptor(mappedInterceptor.getInterceptor());
+		}
+	}
+    
+    // 返回最终的HandlerExecutionChain对象
+	return chain;
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+上面通过三个方面分析了AbstractHandlerMapping，我们明白了拦截器是怎么获取的，我们也明白了HandlerExecutionChain的创建过程。AbstractHandlerMapping抽象类几乎做完了HandlerMapping接口的所有事情，只是handler对象的获取留给了子类去自由发挥。接下来，我们需要看看子类都是如何创建handler对象的</p>
+
+<hr />
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+我们知道如果在配置文件中没有配置HandlerMapping，那么，SpringMVC会根据DispatcherServlet.properties中的配置来获取HandlerMapping的实现类。在DispatcherServlet.properties中配置了两个HandlerMapping实现类BeanNameUrlHandlerMapping和DefaultAnnotationHandlerMapping。接下来我们根据这两个类，来讲解handler的获取。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+BeanNameUrlHandlerMapping和DefaultAnnotationHandlerMapping都是基于URL的HandlerMapping，而且继承关系都是： AbstractDetectingUrlHandlerMapping &ndash;&gt; AbstractUrlHandlerMapping。 所以我们接下来分析基于URL的HandlerMapping。</p>
+
+<h3 id="2-abstracturlhandlermapping分析">2.AbstractUrlHandlerMapping分析</h3>
+
+<h4 id="2-1-基于url匹配handler的过程">2.1 基于URL匹配handler的过程</h4>
+
+<pre><code>protected Object getHandlerInternal(HttpServletRequest request) throws Exception {
+    // 获取请求路径
+	String lookupPath = getUrlPathHelper().getLookupPathForRequest(request);
+	// 查找handler对象
+	Object handler = lookupHandler(lookupPath, request);
+	if (handler == null) {
+		Object rawHandler = null;
+		// 处理根路径，获取配置的rootHandler
+		if (&quot;/&quot;.equals(lookupPath)) {
+			rawHandler = getRootHandler();
+		}
+		if (rawHandler == null) {
+			rawHandler = getDefaultHandler();
+		}
+		if (rawHandler != null) {
+		    // 如果是String类型，则从容器中根据beanName获取
+			if (rawHandler instanceof String) {
+				String handlerName = (String) rawHandler;
+				rawHandler = getApplicationContext().getBean(handlerName);
+			}
+			// 钩子方法子类去校验
+			validateHandler(rawHandler, request);
+			// 使用配置的rawHandler，来创建HandlerExecutionChain，把HandlerExecutionChain当作handler
+			handler = buildPathExposingHandler(rawHandler, lookupPath, lookupPath, null);
+		}
+	}
+	// 返回handler
+	return handler;
+}
+
+protected Object lookupHandler(String urlPath, HttpServletRequest request) throws Exception {
+	// 直接使用路径获取handler，那么，handlerMap中的数据是怎么来的？ 后面再分析。
+	Object handler = this.handlerMap.get(urlPath);
+	if (handler != null) {
+	    // 如果是String类型，则从容器中根据beanName获取
+		if (handler instanceof String) {
+			String handlerName = (String) handler;
+			handler = getApplicationContext().getBean(handlerName);
+		}
+		// 钩子方法子类去校验
+		validateHandler(handler, request);
+		// 使用配置的rawHandler，来创建HandlerExecutionChain，把HandlerExecutionChain当作handler
+		return buildPathExposingHandler(handler, urlPath, urlPath, null);
+	}
+    // 模糊匹配代码省略...
+	// 如果最终没有匹配到，则放回null
+	return null;
+}
+</code></pre>
+
+<h4 id="2-2-handler注册">2.2 handler注册</h4>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+在上面分析过程中，我们不禁会问handlerMap中数据是怎么来的呢？ 这个问题也就是我们需要讲解的handler注册。</p>
+
+<pre><code>protected void registerHandler(String[] urlPaths, String beanName) throws BeansException, IllegalStateException {
+	for (String urlPath : urlPaths) {
+		registerHandler(urlPath, beanName);
+	}
+}
+
+protected void registerHandler(String urlPath, Object handler) throws BeansException, IllegalStateException {
+
+	Object resolvedHandler = handler;
+	
+	// 是否设置懒加载
+	if (!this.lazyInitHandlers &amp;&amp; handler instanceof String) {
+		String handlerName = (String) handler;
+		if (getApplicationContext().isSingleton(handlerName)) {
+			resolvedHandler = getApplicationContext().getBean(handlerName);
+		}
+	}
+
+    // 如果可以直接获取到，则判断和传入的resolvedHandler是否一致
+	Object mappedHandler = this.handlerMap.get(urlPath);
+	if (mappedHandler != null) {
+		if (mappedHandler != resolvedHandler) {
+			throw new IllegalStateException();
+		}
+	}
+	else {
+	    // 设置rootlHandler和defaultHandler
+		if (urlPath.equals(&quot;/&quot;)) {
+			setRootHandler(resolvedHandler);
+		}
+		else if (urlPath.equals(&quot;/*&quot;)) {
+			setDefaultHandler(resolvedHandler);
+		}
+		else {
+		    // 存放到handlerMap中
+			this.handlerMap.put(urlPath, resolvedHandler);
+		}
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+在AbstractUrlHandlerMapping中，并没有调用registerHandler()方法，也就是说，只是提供了方法。而方法修饰符为protected，所以注册handler肯定是在子类进行的。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+AbstractUrlHandlerMapping的实现很简单，可以总结为以下两点：
+1. 根据请求路径urlPath从handlerMap中获取handler，首先直接匹配，然后模糊匹配。
+2. 提供注册handler的方法registerHandler()供子类来注册handler，存放到handlerMap中去。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+接下来可以分析AbstractDetectingUrlHandlerMapping了，从名称上我们就可以看出，这个抽象类是用来检测获取Url的。</p>
+
+<hr />
+
+<h3 id="3-abstractdetectingurlhandlermapping分析">3.AbstractDetectingUrlHandlerMapping分析</h3>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+AbstractDetectingUrlHandlerMapping注册handler是通过重写initApplicationContext()来进行的，在Spring容器启动好后会调用detectHandlers()方法，AbstractDetectingUrlHandlerMapping就开始检测所有的Bean，并获取URL。</p>
+
+<pre><code>protected void detectHandlers() throws BeansException {
+	// 获取容器中所有beanNames(配置detectHandlersInAncestorContexts可以从父容器检测，默认为false)
+	String[] beanNames = (this.detectHandlersInAncestorContexts ?
+			BeanFactoryUtils.beanNamesForTypeIncludingAncestors(getApplicationContext(), Object.class) :
+			getApplicationContext().getBeanNamesForType(Object.class));
+
+	for (String beanName : beanNames) {
+	    // 检测每一个beanName中的所有url(抽象方法，子类去实现如何查找urls)
+		String[] urls = determineUrlsForHandler(beanName);
+		if (!ObjectUtils.isEmpty(urls)) {
+			// 注册handler
+			registerHandler(urls, beanName);
+		}
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+AbstractDetectingUrlHandlerMapping调用了registerHandler()来注册handler，最终都存放到AbstractUrlHandlerMapping#handlerMap中去。剩下的事情就是子类如何实现抽象方法determineUrlsForHandler(beanName)了。</p>
+
+<h3 id="4-beannameurlhandlermapping分析">4. BeanNameUrlHandlerMapping分析</h3>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+BeanNameUrlHandlerMapping是基于beanName来获取Url，beanName必须以/开头。代码很简单，直接看代码了。</p>
+
+<pre><code>protected String[] determineUrlsForHandler(String beanName) {
+	List&lt;String&gt; urls = new ArrayList&lt;String&gt;();
+	// beanName需要以/开头
+	if (beanName.startsWith(&quot;/&quot;)) {
+		urls.add(beanName);
+	}
+	// 获取该beanName的别名，别名也需要以/开头
+	String[] aliases = getApplicationContext().getAliases(beanName);
+	for (String alias : aliases) {
+		if (alias.startsWith(&quot;/&quot;)) {
+			urls.add(alias);
+		}
+	}
+	// 把匹配的路径全部返回
+	return StringUtils.toStringArray(urls);
+}
+</code></pre>
+
+<h3 id="4-defaultannotationhandlermapping分析">4. DefaultAnnotationHandlerMapping分析</h3>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+虽然DefaultAnnotationHandlerMapping在3.2版本以后就设置成了@Deprecated，也就是不建议使用这个了(RequestMappingHandlerMapping代替了它)。但我现在使用的4.0.2版本中DispatcherServlet.properties默认提供的还是DefaultAnnotationHandlerMapping，所以在我们不主动切换HandlerMapping的大多数情况下，我们还是会使用DefaultAnnotationHandlerMapping。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+DefaultAnnotationHandlerMapping的功能是从配置了@Controller、@RequestMapping的类中回去请求url。</p>
+
+<pre><code>protected String[] determineUrlsForHandler(String beanName) {
+	ApplicationContext context = getApplicationContext();
+	Class&lt;?&gt; handlerType = context.getType(beanName);
+	// 获取类型注解@RequestMapping
+	RequestMapping mapping = context.findAnnotationOnBean(beanName, RequestMapping.class);
+	if (mapping != null) {
+		// 缓存类型上的@RequestMapping注解
+		this.cachedMappings.put(handlerType, mapping);
+		Set&lt;String&gt; urls = new LinkedHashSet&lt;String&gt;();
+		// 获取@RequestMapping value值
+		String[] typeLevelPatterns = mapping.value();
+		if (typeLevelPatterns.length &gt; 0) {
+			// 获取方法上的@RequestMapping
+			String[] methodLevelPatterns = determineUrlsForHandlerMethods(handlerType, true);
+			// 结合类型上的@RequestMapping路径和方法上的@RequestMapping路径
+			for (String typeLevelPattern : typeLevelPatterns) {
+			    // 类型上@RequestMapping value值可以不用/开头，这里会检测
+				if (!typeLevelPattern.startsWith(&quot;/&quot;)) {
+					typeLevelPattern = &quot;/&quot; + typeLevelPattern;
+				}
+				// 方法上是否有空值的@RequestMapping
+				boolean hasEmptyMethodLevelMappings = false;
+				for (String methodLevelPattern : methodLevelPatterns) {
+					if (methodLevelPattern == null) {
+						hasEmptyMethodLevelMappings = true;
+					}
+					else {
+					    // 获取结合后的url
+						String combinedPattern = getPathMatcher().combine(typeLevelPattern, methodLevelPattern);
+						addUrlsForPath(urls, combinedPattern);
+					}
+				}
+				// 直接使用类型上的@RequestMapping，但需要时Controller对象类型
+				if (hasEmptyMethodLevelMappings ||
+						org.springframework.web.servlet.mvc.Controller.class.isAssignableFrom(handlerType)) {
+					addUrlsForPath(urls, typeLevelPattern);
+				}
+			}
+			return StringUtils.toStringArray(urls);
+		}
+		else {
+			// 获取方法上的@RequestMapping
+			return determineUrlsForHandlerMethods(handlerType, false);
+		}
+	}
+	else if (AnnotationUtils.findAnnotation(handlerType, Controller.class) != null) {
+		// 检测@Controller中的@RequestMapping
+		return determineUrlsForHandlerMethods(handlerType, false);
+	}
+	else {
+		return null;
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+上面的方法有点复杂，就上面的方法我们归纳一下：
+1. 检测类@RequestMapping和@Controller，@RequestMapping优先。如果存在@RequestMapping，则不会检测@Controller。
+2. 如果类@RequestMapping存在，则和方法@RequestMapping组合在一起。如果存在方法@RequestMapping存在没有设置value，则以类@RequestMapping路径设置。
+3. 如果没有类@RequestMapping，则检测类@Controller。注意@Controller(value=&ldquo;name&rdquo;)，@Controller中设置的value并不会影响请求url。</p>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+下面我们在看看方法上的@RequestMapping是如何解析的。</p>
+
+<pre><code>protected String[] determineUrlsForHandlerMethods(Class&lt;?&gt; handlerType, final boolean hasTypeLevelMapping) {
+    // 这是一个空方法，返回null，提供给子类自定义
+	String[] subclassResult = determineUrlsForHandlerMethods(handlerType);
+	if (subclassResult != null) {
+		return subclassResult;
+	}
+
+	final Set&lt;String&gt; urls = new LinkedHashSet&lt;String&gt;();
+	Set&lt;Class&lt;?&gt;&gt; handlerTypes = new LinkedHashSet&lt;Class&lt;?&gt;&gt;();
+	// 添加handler以及所有接口
+	handlerTypes.add(handlerType);
+	handlerTypes.addAll(Arrays.asList(handlerType.getInterfaces()));
+	// 遍历handler及其接口方法
+	for (Class&lt;?&gt; currentHandlerType : handlerTypes) {
+	    // 递归调用类以及父类方法（接口及父接口），排除bridge方法(编译器生成的方法)和Object方法
+		ReflectionUtils.doWithMethods(currentHandlerType, new ReflectionUtils.MethodCallback() {
+			@Override
+			public void doWith(Method method) {
+			    // 获取方法@RequestMapping
+				RequestMapping mapping = AnnotationUtils.findAnnotation(method, RequestMapping.class);
+				if (mapping != null) {
+				    // 获取路径值
+					String[] mappedPatterns = mapping.value();
+					if (mappedPatterns.length &gt; 0) {
+						for (String mappedPattern : mappedPatterns) {
+						    //如果存在类@RequestMapping，则方法@RequestMapping必须以/开头
+							if (!hasTypeLevelMapping &amp;&amp; !mappedPattern.startsWith(&quot;/&quot;)) {
+								mappedPattern = &quot;/&quot; + mappedPattern;
+							}
+							addUrlsForPath(urls, mappedPattern);
+						}
+					}
+					// 添加null
+					else if (hasTypeLevelMapping) {
+						urls.add(null);
+					}
+				}
+			}
+		}, ReflectionUtils.USER_DECLARED_METHODS);
+	}
+	return StringUtils.toStringArray(urls);
+}	
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+关于方法@RequestMapping我们也总结一下：
+1. handler类，父类，接口，父接口中所有设置有@RequestMapping注解的方法都会处理。
+2. 如果有类@RequestMapping，则方法@RequestMapping设置value时，必须以/开头，否则添加到路径集合中。如果是@Controller，则方法@RequestMapping可以不用/开头设置value。</p>
+
+<h3 id="总结">总结</h3>
+
+<p>&#160;&#160;&#160;&#160;&#160;&#160;
+1. HandlerMapping接口的功能是用来创建HandlerExecutionChain对象。而在创建过程中需要获取hander对象和拦截器。
+2. 拦截器的获取是通过属性interceptors在配置文件中注入的。
+3. handler对象的获取是根据请求url，从handlerMap中匹配。
+4. handlerMap中的数据，是在Spring容器启动完成后进行设置。设置方式由子类完成。
+5. 明白了BeanNameUrlHandlerMapping的设置。
+6. 明白了@Controller、@RequestMapping注解配置的url是如何被读取的。</p>
+
+            </div>
+
+            <aside>
+                
+                <ul class="list-inline post-tags">
+                    
+                    <li>
+                        <a href="http://www.xiaoqiyiye.com//tags/spring-mvc">
+                            <i class="fa fa-tags"></i>
+                            spring mvc
+                        </a>
+                    </li>
+                    
+                </ul>
+
+                
+                
+                <h3>相关博客</h3>
+                <ul class="post-rels">
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/">SpringMVC源码分析(2) DispatchServlet请求分发</a></li>
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2015/10/21/spring/">SpringMVC源码分析(1) DispatchServlet初始化</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                </ul>
+            </aside>
+            
+            
+            <footer>
+
+                <nav>
+                    <ul class="pager">
+
+                        
+                        <li class="previous"><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/"><span aria-hidden="true">&larr;</span> Older</a></li>
+                        
+
+                        <li><a href="http://www.xiaoqiyiye.com//post">All Posts</a></li>
+
+                        
+                        <li class="next"><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/">Newer <span aria-hidden="true">&rarr;</span></a></li>
+                        
+
+                    </ul>
+                </nav>
+
+                
+                
+                
+            </footer>
+
+        </article>
+    </div>
+    <div class="col-md-4">
+        
+<aside>
+    <div class="row">
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">最近博客</h2>
+                </div>
+                <div class="list-group">
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/" class="list-group-item">SpringCache (4) CacheInterceptor、</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/" class="list-group-item">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/" class="list-group-item">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/" class="list-group-item">SpringCache源码分析(1)  CacheManager和Cache</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping" class="list-group-item">SpringMVC源码分析(3) HandlerMapping分析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/" class="list-group-item">SpringMVC源码分析(2) DispatchServlet请求分发</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/21/spring/" class="list-group-item">SpringMVC源码分析(1) DispatchServlet初始化</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/18/spring/" class="list-group-item">SpringWeb源码分析(1) Web容器启动</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/about/" class="list-group-item">关于我</a>
+                    
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">分类</h2>
+                </div>
+                <div class="list-group">
+                    
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring" class="list-group-item">
+                        <span class="badge">1</span>
+                        spring
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-cache" class="list-group-item">
+                        <span class="badge">4</span>
+                        spring-cache
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-mvc" class="list-group-item">
+                        <span class="badge">3</span>
+                        spring-mvc
+                    </a>
+                    
+                </div>
+            </div>
+        </div>
+
+    </div>
+</aside>
+
+    </div>
+</div>
+
+</div>
+<hr>
+
+<footer class="container copy">
+    <p>&copy; 2016  linya </p>
+	<p>Powered by <a href="http://github.com/xiaoqiyiye" target="_blank">Xiaoqiyiye</a></p>
+	<p>Email: linya_xiaoqiyiye@126.com</p>
+</footer>
+
+<script src="//code.jquery.com/jquery-2.1.3.min.js"></script>
+<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>
+<script src="//yandex.st/highlightjs/8.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+ga('create', '', 'auto');
+ga('send', 'pageview');
+
+</script>
+
+<script>
+document.write('<script src="//sharebutton.net/plugin/sharebutton.php?type=horizontal&u=' + encodeURIComponent(document.location.href) + '"></scr' + 'ipt>');
+</script>
+

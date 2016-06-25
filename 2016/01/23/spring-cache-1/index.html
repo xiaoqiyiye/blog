@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+
+<meta charset="utf-8">
+
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+<meta property="og:url" content="http://www.xiaoqiyiye.com/">
+
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="SpringCache源码分析(1)  CacheManager和Cache &middot; Xiaoqiyiye">
+
+<meta property="og:site_name" content="Xiaoqiyiye">
+
+<title>
+    
+    SpringCache源码分析(1)  CacheManager和Cache
+    
+</title>
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap-theme.min.css">
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="//yandex.st/highlightjs/8.0/styles/solarized_dark.min.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/styles.css">
+<link rel="stylesheet" href="http://www.xiaoqiyiye.com//css/custom.css">
+
+
+<link rel="shortcut icon" href="http://www.xiaoqiyiye.com//assets/favicon.ico">
+
+
+<link rel="alternate" type="application/rss+xml" title="RSS" href="http://www.xiaoqiyiye.com//index.xml">
+
+
+<div class="container">
+    <header class="nav">
+        <nav class="navbar navbar-default">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand" href="http://www.xiaoqiyiye.com/">Xiaoqiyiye</a>
+                </div>
+
+                <div class="collapse navbar-collapse" id="navbar-collapse">
+                    <ul class="nav navbar-nav">
+                        <li><a href="http://www.xiaoqiyiye.com//post">博客</a></li>
+                        <li><a href="http://www.xiaoqiyiye.com//tags">分类</a></li>
+                        
+                        <li><a href="http://www.xiaoqiyiye.com/about/">关于我</a></li>
+                        
+                    </ul>
+
+                    <ul class="nav navbar-nav navbar-right">
+                        
+                        
+                        
+                        <li>
+                            <a href="https://github.com/xiaoqiyiye" target="_blank">
+                                <i class="fa fa-github-square"></i>
+                                GitHub
+                            </a>
+                        </li>
+                        
+                        
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+
+<div class="row">
+    <div class="col-md-8">
+        <article class="post">
+
+            <header>
+                <div class="post-date">
+                    <span class="glyphicon glyphicon-calendar"></span>
+                    <time datetime="2016年1月22日">
+                        2016年1月22日
+                    </time>
+                </div>
+                <h1 class="post-title">
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/">SpringCache源码分析(1)  CacheManager和Cache</a>
+                </h1>
+            </header>
+
+            <div class="post-content">
+                
+
+<hr />
+
+<p>&#160;&#160;&#160;&#160;
+这篇作为Spring Cache源码分析的起始篇，重要在于分析CacheManager和Cache。但是，在分析CacheManager和Cache之前，还是先看一个简单的例子，这样有助于理解Spring Cache的概念，知道Spring Cache在干什么，有什么作用，只有知道了Spring Cache的用处，在分析源码的时候才能知道Spring Cache的功能是怎么实现的！ 这里不讲使用的细节，如果想要了解细节请看其他质料或后面篇章中的详细分析。</p>
+
+<hr />
+
+<h3 id="hello示例-下载-https-github-com-xiaoqiyiye-blog-example-tree-master-seven-xiaoqiyiye-spring-cache-hello">Hello示例 <a href="https://github.com/xiaoqiyiye/blog-example/tree/master/seven.xiaoqiyiye.spring.cache.hello">下载</a></h3>
+
+<p>&#160;&#160;&#160;&#160;
+下面直接上示例代码，一个简单的Hello程序，Hello、HelloService、HelloTest。在下面代码中我们用到了注解：@CachePut，@Cacheable，@CacheEvict。从单词意思我们就应该知道这些的作用是什么，@CachePut用于把数据存放到缓存中；@Cacheable用于从缓存中获取数据，如果缓存中不存在就执行代码得到并存放在缓存中去，以便下次从缓存中获取；@CacheEvict用于驱除缓存中的数据。在后面的章节中会详细的讲解这些注解中的每个属性。</p>
+
+<p>Hello对象：</p>
+
+<pre><code>public class Hello {
+	String name;
+	public Hello(String name){
+		this.name = name;
+	}
+	public String getName() {
+		return name;
+	}
+	@Override
+	public String toString() {
+		return &quot;Hello,&quot; + name;
+	}
+}
+</code></pre>
+
+<p>HelloService对象：</p>
+
+<pre><code>@Service
+public class HelloService {
+	/**
+	 * 以Hello#name属性域作为缓存key（不管缓存是否存在，都会去执行）
+	 * @param hello
+	 * @return
+	 */
+	@CachePut(value=&quot;hello&quot;, key=&quot;#hello.name&quot;)
+	public Hello put(Hello hello){
+		System.out.println(&quot;put Hello:&quot; + hello.getName());
+		return hello;
+	}
+
+	/**
+	 * 以name参数为key
+	 * 如果缓存中没有，则执行代码并缓存
+	 * 如果缓存中已经存在，则直接从缓存中获取
+	 * @param name
+	 * @return
+	 */
+	@Cacheable(value=&quot;hello&quot;, key=&quot;#name&quot;)
+	public Hello get(String name){
+		System.out.println(&quot;new Hello:&quot; + name);
+		return new Hello(name);
+	}
+
+	/**
+	 * 从命名为&quot;hello&quot;的缓存中，删除掉name参数的key
+	 * @param name
+	 */
+	@CacheEvict(value=&quot;hello&quot;, key=&quot;#name&quot;)
+	public void remove(String name){
+		System.out.println(&quot;remove Hello:&quot; + name);
+	}
+
+	/**
+	 * 从命名为&quot;hello&quot;的缓存中，删除所有缓存
+	 */
+	@CacheEvict(value=&quot;hello&quot;, allEntries=true)
+	public void removeAll(){
+		System.out.println(&quot;remove all!&quot;);
+	}
+}
+</code></pre>
+
+<p>HelloTest测试：</p>
+
+<pre><code>@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(locations=&quot;classpath:applicationContext.xml&quot;)
+public class HelloTest extends AbstractJUnit4SpringContextTests{
+
+	@Test
+	public void hello(){
+		HelloService service = applicationContext.getBean(HelloService.class);
+		service.get(&quot;linya&quot;);
+		Hello hello = service.get(&quot;linya&quot;);
+		System.out.println(hello.toString());
+	}
+}
+</code></pre>
+
+<p>我们可以试着运行上面的测试文件，但是程序是不能运行的，为什么呢，因为需要配置文件applicationContext.xml。上面我们说过通过注解可以缓存、获取、删除数据，那么数据被缓存到了哪里呢？很显然这样需要applicationContext.xml配置文件来处理，指明数据需要缓存的地方，这个缓存的地方在Spring Cache被定义为Cache和CacheManager，下面我们来看看如何简单的配置Spring Cache。</p>
+
+<pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;beans xmlns=&quot;http://www.springframework.org/schema/beans&quot;
+	xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot;
+	xmlns:context=&quot;http://www.springframework.org/schema/context&quot;
+	xmlns:cache=&quot;http://www.springframework.org/schema/cache&quot;
+	xsi:schemaLocation=&quot;
+        http://www.springframework.org/schema/beans 
+        http://www.springframework.org/schema/beans/spring-beans-4.1.xsd
+        http://www.springframework.org/schema/context 
+        http://www.springframework.org/schema/context/spring-context-4.1.xsd
+        http://www.springframework.org/schema/cache
+        http://www.springframework.org/schema/cache/spring-cache-4.1.xsd&quot;
+	default-lazy-init=&quot;true&quot;&gt;
+	&lt;context:component-scan base-package=&quot;seven.xiaoqiyiye.spring.cache&quot;/&gt;
+    &lt;context:annotation-config/&gt;
+    
+	&lt;!-- SpringCache驱动一定要配置，后面会详细讲解这个配置的作用 --&gt;
+    &lt;cache:annotation-driven/&gt;
+
+	&lt;!-- 配置CacheManager，CacheManager中管理着Cache集合，在这里配置了一个名称为&quot;hello&quot;的Cache--&gt;
+	&lt;bean id=&quot;cacheManager&quot; class=&quot;org.springframework.cache.support.SimpleCacheManager&quot;&gt;
+        &lt;property name=&quot;caches&quot;&gt;
+            &lt;set&gt;
+                &lt;bean class=&quot;org.springframework.cache.concurrent.ConcurrentMapCacheFactoryBean&quot;&gt;
+                    &lt;property name=&quot;name&quot; value=&quot;hello&quot;/&gt;
+                &lt;/bean&gt;
+            &lt;/set&gt;
+        &lt;/property&gt;
+    &lt;/bean&gt;
+&lt;/beans&gt;
+</code></pre>
+
+<hr />
+
+<h3 id="cachemanager-和-cache">CacheManager 和 Cache</h3>
+
+<p>&#160;&#160;&#160;&#160;
+CacheManager定义很简单，用于管理Cache集合，并提供通过Cache名称获取对应Cache对象的方法。下面是CacheManager接口定义：</p>
+
+<pre><code>/**
+ * Spring's central cache manager SPI.
+ * Allows for retrieving named {@link Cache} regions.
+ * CacheManager可以通过名称来获取一个Cache对象
+ * @author Costin Leau
+ * @since 3.1
+ */
+public interface CacheManager {
+
+	/**
+	 * 通过name来获取Cache对象
+	 */
+	Cache getCache(String name);
+	
+	/**
+     * 返回这个CacheManager管理的Cache集合的所有Cache名称
+	 */
+	Collection&lt;String&gt; getCacheNames();
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;
+从上面的CacheManager可以知道，每个Cache必须要指定一个name，这个name需要在CacheManager中是唯一的。另外Cache对象还需要支持一些数据操作，存放数据、获取数据、驱除数据等等。下面，我们看看Cache接口的定义：</p>
+
+<pre><code>/**
+ * Interface that defines common cache operations.
+ */
+public interface Cache {
+
+	/**
+     * 获取该Cache的名称
+	 */
+	String getName();
+
+	/**
+     * 返回底层真是的缓存对象，接口中并不需要关系具体是怎么实现的，
+     * 使用Map、Reids、Guava，Ecache等
+	 */
+	Object getNativeCache();
+
+	/**
+     * 返回被包装的值，主要是为了null的处理
+	 */
+	ValueWrapper get(Object key);
+
+	/**
+     * 返回缓存中指定key的值，并获得这个值的特定类型
+	 */
+	&lt;T&gt; T get(Object key, Class&lt;T&gt; type);
+
+	/**
+     * 存放key-value数据到缓存中
+	 */
+	void put(Object key, Object value);
+
+	ValueWrapper putIfAbsent(Object key, Object value);
+
+	/**
+     * 从缓存中删除指定key的数据
+	 */
+	void evict(Object key);
+
+	/**
+     * 删除缓存中所有数据
+	 * Remove all mappings from the cache.
+	 */
+	void clear();
+
+	interface ValueWrapper {
+		Object get();
+	}
+
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;
+CacheManager和Cache接口定义就是这么简单，下面再看看CacheManager和Cache的实现类。它们的实现类很多，我们这里选基于ConcurrentMap的实现：ConcurrentMapCacheManager和ConcurrentMapCache。</p>
+
+<pre><code>/**
+ * ConcurrentMapCacheManager负责管理ConcurrentMapCache对象，支持懒加载获取，也支持预先实例化对象，
+ * 通过调用#setCacheNames方法可以预定义一些ConcurrentMapCache到ConcurrentMapCacheManager中，
+ * 但是一旦设置过后，dynamic就会设置为false，这时就不再支持动态创建Cache功能。
+ *
+ * 通常是否懒加载可以通过不同的构造器来控制，new ConcurrentMapCacheManager()创建懒加载的CacheManager，
+ * new ConcurrentMapCacheManager(String... cacheNames)创建预先定义Cache的CacheManager。
+ */
+public class ConcurrentMapCacheManager implements CacheManager {
+	
+	//使用ConcurrentMap来管理Cache集合对象
+	private final ConcurrentMap&lt;String, Cache&gt; cacheMap = new ConcurrentHashMap&lt;String, Cache&gt;(16);
+	//表示是否可以动态创建Cache缓存，如果指定过name那么就不能动态创建
+	private boolean dynamic = true;
+	
+	public ConcurrentMapCacheManager() {
+	}
+
+	public ConcurrentMapCacheManager(String... cacheNames) {
+		setCacheNames(Arrays.asList(cacheNames));
+	}
+	
+	/**
+     * 这里会初始化ConcurrentMapCache，并存放到ConcurrentMap中进行管理
+     * 一旦初始化过，这dynamic=false，在调用getCache(name)是就不会动态创建了
+	 */
+	public void setCacheNames(Collection&lt;String&gt; cacheNames) {
+		if (cacheNames != null) {
+			for (String name : cacheNames) {
+				this.cacheMap.put(name, createConcurrentMapCache(name));
+			}
+			this.dynamic = false;
+		}
+		else {
+			this.dynamic = true;
+		}
+	}
+
+	@Override
+	public Collection&lt;String&gt; getCacheNames() {
+		return Collections.unmodifiableSet(this.cacheMap.keySet());
+	}
+
+	/**
+	 * 根据缓存name来获取关联的ConcurrentMapCache实例
+	 * 如果ConcurrentMapCacheManager中没有获取到，则动态获取。（能否动态获取需要看dynamic是否为true）
+	 */
+	@Override
+	public Cache getCache(String name) {
+		Cache cache = this.cacheMap.get(name);
+		if (cache == null &amp;&amp; this.dynamic) {
+			synchronized (this.cacheMap) {
+				cache = this.cacheMap.get(name);
+				if (cache == null) {
+					cache = createConcurrentMapCache(name);
+					this.cacheMap.put(name, cache);
+				}
+			}
+		}
+		return cache;
+	}
+
+	/**
+	 * 创建Cache对象
+	 */
+	protected Cache createConcurrentMapCache(String name) {
+		return new ConcurrentMapCache(name, isAllowNullValues());
+	}
+
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;
+CacheManager和Cache是不是很简单？是的，非常简单！ 可是在上面的applicationContext.xml并没有配置ConcurrentMapCacheManager和ConcurrentMapCache呀，在回顾一下applicationContext.xml中是怎么配置的吧，配置如下：</p>
+
+<pre><code>&lt;bean id=&quot;cacheManager&quot; class=&quot;org.springframework.cache.support.SimpleCacheManager&quot;&gt;
+    &lt;property name=&quot;caches&quot;&gt;
+        &lt;set&gt;
+            &lt;bean class=&quot;org.springframework.cache.concurrent.ConcurrentMapCacheFactoryBean&quot;&gt;
+                &lt;property name=&quot;name&quot; value=&quot;hello&quot;/&gt;
+            &lt;/bean&gt;
+        &lt;/set&gt;
+    &lt;/property&gt;
+&lt;/bean&gt;
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;
+在applicationContext.xml中配置了SimpleCacheManager和ConcurrentMapCacheFactoryBean，SimpleCacheManager也是一个CacheManager的实现类，一个比ConcurrentMapCacheManager更简单的实现类，它需要外部指定Cache集合对象，而这个Cache对象正是使用ConcurrentMapCacheFactoryBean来注入到Spring的。虽然这两个类很简单，但是还是看一下部分源码吧（去掉了一些方法）。</p>
+
+<pre><code>public class ConcurrentMapCacheFactoryBean implements FactoryBean&lt;ConcurrentMapCache&gt;, BeanNameAware, InitializingBean {
+
+	//定义Cache的名称
+	private String name = &quot;&quot;;
+
+	//注入到Spring时缓存存储的数据
+	private ConcurrentMap&lt;Object, Object&gt; store;
+
+	//是否允许null值
+	private boolean allowNullValues = true;
+
+	//真实的Cache实现类
+
+	private ConcurrentMapCache cache;
+
+
+	/**
+	 * Specify the name of the cache.
+	 * &lt;p&gt;Default is &quot;&quot; (empty String).
+	 */
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public void setStore(ConcurrentMap&lt;Object, Object&gt; store) {
+		this.store = store;
+	}
+
+	public void setAllowNullValues(boolean allowNullValues) {
+		this.allowNullValues = allowNullValues;
+	}
+
+	/**
+	 * 以Spring注入的beanName作为Cache的名称
+	 */
+	@Override
+	public void setBeanName(String beanName) {
+		if (!StringUtils.hasLength(this.name)) {
+			setName(beanName);
+		}
+	}
+
+	/**
+	 * 对象注入到Spring的时候就初始化好了Cache对象（ConcurrentMapCache）
+	 */
+	@Override
+	public void afterPropertiesSet() {
+		this.cache = (this.store != null ? new ConcurrentMapCache(this.name, this.store, this.allowNullValues) :
+				new ConcurrentMapCache(this.name, this.allowNullValues));
+	}
+
+	@Override
+	public ConcurrentMapCache getObject() {
+		return this.cache;
+	}
+}
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;
+其实，在applicationContext.xml中就负责配置了CacheManager，告诉Spring Cache使用什么要的CacheManager实现，接下来我们使用ConcurrentMapCacheManager来配置，可以达到同样的效果。</p>
+
+<pre><code>&lt;bean id=&quot;cacheManager&quot; class=&quot;org.springframework.cache.concurrent.ConcurrentMapCacheManager&quot;&gt;
+    &lt;!-- 可以不设置cacheNames哦，设置之后就不能动态创建Cache了。前面代码已经分析过，明白了吗！ --&gt;
+    &lt;property name=&quot;cacheNames&quot;&gt;
+    	&lt;set&gt;
+    		&lt;value&gt;hello&lt;/value&gt;
+    		&lt;value&gt;world&lt;/value&gt;
+    	&lt;/set&gt;
+    &lt;/property&gt;
+&lt;/bean&gt;
+</code></pre>
+
+<p>&#160;&#160;&#160;&#160;
+通过上面的分析，我们已经清楚地了解了CacheManager和Cache接口的作用，以及基于ConcurrentMap的实现。但是，分析了这么久，那Spring到底是怎么缓存数据的呢？ @CachePut、@Cacheable、@CacheEvict是怎么产生作用的呢？ 莫急，莫急，这个在后续章节中详细说明。至少我们现在知道，数据被存储到哪里去了！ 对，数据被存储在Cache是实现类里，就这么简单！</p>
+
+<p>&#160;&#160;&#160;&#160;
+CacheManager和Cache还有基于Redis、Guava、EhCache、JCache的实现，这里就不分析了。哈哈，其实原理都一样！</p>
+
+            </div>
+
+            <aside>
+                
+                <ul class="list-inline post-tags">
+                    
+                    <li>
+                        <a href="http://www.xiaoqiyiye.com//tags/spring-cache">
+                            <i class="fa fa-tags"></i>
+                            spring cache
+                        </a>
+                    </li>
+                    
+                </ul>
+
+                
+                
+                <h3>相关博客</h3>
+                <ul class="post-rels">
+                    
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/">SpringCache (4) CacheInterceptor、</a></li>
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a></li>
+                    
+                    
+                    
+                    
+                    
+                    <li><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a></li>
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                </ul>
+            </aside>
+            
+            
+            <footer>
+
+                <nav>
+                    <ul class="pager">
+
+                        
+                        <li class="previous"><a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/"><span aria-hidden="true">&larr;</span> Older</a></li>
+                        
+
+                        <li><a href="http://www.xiaoqiyiye.com//post">All Posts</a></li>
+
+                        
+                        <li class="next"><a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping">Newer <span aria-hidden="true">&rarr;</span></a></li>
+                        
+
+                    </ul>
+                </nav>
+
+                
+                
+                
+            </footer>
+
+        </article>
+    </div>
+    <div class="col-md-4">
+        
+<aside>
+    <div class="row">
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">最近博客</h2>
+                </div>
+                <div class="list-group">
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/24/spring-cache-4/" class="list-group-item">SpringCache (4) CacheInterceptor、</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-3/" class="list-group-item">SpringCache源码分析(3) @CachePut、@Cacheable、@CacheEvict注解解析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-2/" class="list-group-item">SpringCache源码分析(2) @CachePut、@Cacheable、@CacheEvict、@Caching注解</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2016/01/23/spring-cache-1/" class="list-group-item">SpringCache源码分析(1)  CacheManager和Cache</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/handlermapping" class="list-group-item">SpringMVC源码分析(3) HandlerMapping分析</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/22/spring/" class="list-group-item">SpringMVC源码分析(2) DispatchServlet请求分发</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/21/spring/" class="list-group-item">SpringMVC源码分析(1) DispatchServlet初始化</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/2015/10/18/spring/" class="list-group-item">SpringWeb源码分析(1) Web容器启动</a>
+                    
+                    <a href="http://www.xiaoqiyiye.com/about/" class="list-group-item">关于我</a>
+                    
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xs-12 col-sm-4 col-md-12">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title">分类</h2>
+                </div>
+                <div class="list-group">
+                    
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring" class="list-group-item">
+                        <span class="badge">1</span>
+                        spring
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-cache" class="list-group-item">
+                        <span class="badge">4</span>
+                        spring-cache
+                    </a>
+                    
+                    
+                    <a href="http://www.xiaoqiyiye.com//tags/spring-mvc" class="list-group-item">
+                        <span class="badge">3</span>
+                        spring-mvc
+                    </a>
+                    
+                </div>
+            </div>
+        </div>
+
+    </div>
+</aside>
+
+    </div>
+</div>
+
+</div>
+<hr>
+
+<footer class="container copy">
+    <p>&copy; 2016  linya </p>
+	<p>Powered by <a href="http://github.com/xiaoqiyiye" target="_blank">Xiaoqiyiye</a></p>
+	<p>Email: linya_xiaoqiyiye@126.com</p>
+</footer>
+
+<script src="//code.jquery.com/jquery-2.1.3.min.js"></script>
+<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>
+<script src="//yandex.st/highlightjs/8.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+ga('create', '', 'auto');
+ga('send', 'pageview');
+
+</script>
+
+<script>
+document.write('<script src="//sharebutton.net/plugin/sharebutton.php?type=horizontal&u=' + encodeURIComponent(document.location.href) + '"></scr' + 'ipt>');
+</script>
+
